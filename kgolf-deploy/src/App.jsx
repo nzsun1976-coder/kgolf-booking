@@ -6,17 +6,23 @@ import { getFirestore, doc, setDoc, onSnapshot } from "firebase/firestore";
 //  🔥 FIREBASE CONFIG — 아래 값을 본인 것으로 교체하세요
 //     Firebase 콘솔 > 프로젝트 설정 > 내 앱 > SDK 구성
 // ════════════════════════════════════════════════════
+// Import the functions you need from the SDKs you need
+import { initializeApp } from "firebase/app";
+// TODO: Add SDKs for Firebase products that you want to use
+// https://firebase.google.com/docs/web/setup#available-libraries
+
+// Your web app's Firebase configuration
 const firebaseConfig = {
-  apiKey:            "REPLACE_WITH_YOUR_API_KEY",
-  authDomain:        "REPLACE_WITH_YOUR_AUTH_DOMAIN",
-  projectId:         "REPLACE_WITH_YOUR_PROJECT_ID",
-  storageBucket:     "REPLACE_WITH_YOUR_STORAGE_BUCKET",
-  messagingSenderId: "REPLACE_WITH_YOUR_MESSAGING_SENDER_ID",
-  appId:             "REPLACE_WITH_YOUR_APP_ID",
+  apiKey: "AIzaSyDBRCKA-yd7oUr19_UiIP6TTlObJ52DQ08",
+  authDomain: "kgolf-booking-b909e.firebaseapp.com",
+  projectId: "kgolf-booking-b909e",
+  storageBucket: "kgolf-booking-b909e.firebasestorage.app",
+  messagingSenderId: "165994639150",
+  appId: "1:165994639150:web:7285f0502f3639185654bf"
 };
 
-const firebaseApp = initializeApp(firebaseConfig);
-const db = getFirestore(firebaseApp);
+// Initialize Firebase
+const app = initializeApp(firebaseConfig);
 
 // ── Constants ──────────────────────────────────────
 const NUM_BAYS = 11;
