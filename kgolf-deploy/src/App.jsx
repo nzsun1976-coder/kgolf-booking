@@ -255,7 +255,7 @@ export default function KGolfApp() {
 
   // ── Auth ──
   const doLogin = () => {
-    if (lf.email === "admin@kgolf.nz" && lf.pass === "admin123") { setIsAdmin(true); setView("counter"); return; }
+    if (lf.email === "admin@kgolf.nz" && lf.pass === "admin1234") { setIsAdmin(true); setView("counter"); return; }
     if (lf.email === "admin@kgolf.nz") { pop("Invalid password.", "err"); return; }
     const u = regUsers.find((u) => u.email === lf.email && u.pass === lf.pass);
     if (!u) { pop("Incorrect email or password.", "err"); return; }
