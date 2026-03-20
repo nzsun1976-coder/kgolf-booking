@@ -1,10 +1,9 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useCallback } from "react";
 import { initializeApp } from "firebase/app";
-import { getFirestore, doc, setDoc, onSnapshot } from "firebase/firestore";
+import { getFirestore, doc, setDoc, onSnapshot, getDoc } from "firebase/firestore";
 
 // ════════════════════════════════════════════════════
 //  🔥 FIREBASE CONFIG — 아래 값을 본인 것으로 교체하세요
-//     Firebase 콘솔 > 프로젝트 설정 > 내 앱 > SDK 구성
 // ════════════════════════════════════════════════════
 // Import the functions you need from the SDKs you need
 import { initializeApp } from "firebase/app";
@@ -24,6 +23,7 @@ const firebaseConfig = {
 // Initialize Firebase
 const app = initializeApp(firebaseConfig);
 
+
 // ── Constants ──────────────────────────────────────
 const NUM_BAYS = 11;
 const OPEN_H = 9, CLOSE_H = 23;
@@ -40,13 +40,18 @@ const isConsecutive = (hours) => {
   for (let i = 1; i < s.length; i++) if (s[i] !== s[i - 1] + 1) return false;
   return true;
 };
+// 이름 첫글자만 표시 (프라이버시)
+const displayName = (b) => {
+  const n = b.userNick || b.userName || "";
+  return n.length > 6 ? n.slice(0, 6) + "…" : n;
+};
 
 // ── Colour palette ─────────────────────────────────
 const C = {
   bg: "#f2f7f4", white: "#ffffff",
   green: "#1b8a3d", greenDark: "#156b2f", greenLight: "#27b550",
   greenPale: "#e8f5ed", greenPale2: "#d0ebd8",
-  gold: "#e09820", goldLight: "#f0b830",
+  gold: "#e09820",
   text: "#101f15", textMid: "#3a5040", muted: "#7a9880",
   border: "#d5e5db", borderMed: "#b8d4bf",
   red: "#d42b20", redPale: "#fde8e6",
@@ -60,12 +65,7 @@ function KGolfLogo({ h = 28 }) {
   const s = h / 36;
   return (
     <div style={{ display: "flex", alignItems: "center", gap: Math.round(8 * s) }}>
-      <div style={{
-        width: Math.round(34 * s), height: Math.round(34 * s), borderRadius: Math.round(8 * s),
-        background: `linear-gradient(135deg,${C.green},${C.greenLight})`,
-        display: "flex", alignItems: "center", justifyContent: "center",
-        boxShadow: "0 3px 12px rgba(27,138,61,.35)", flexShrink: 0,
-      }}>
+      <div style={{ width: Math.round(34 * s), height: Math.round(34 * s), borderRadius: Math.round(8 * s), background: `linear-gradient(135deg,${C.green},${C.greenLight})`, display: "flex", alignItems: "center", justifyContent: "center", boxShadow: "0 3px 12px rgba(27,138,61,.35)", flexShrink: 0 }}>
         <svg width={Math.round(20 * s)} height={Math.round(20 * s)} viewBox="0 0 20 20" fill="none">
           <path d="M2 3h3v6l5-6h4l-5 6 5 8h-4l-3-5v5H2V3z" fill="white" />
         </svg>
@@ -82,15 +82,23 @@ function KGolfLogo({ h = 28 }) {
 function Toast({ toast }) {
   if (!toast) return null;
   return (
-    <div style={{
-      position: "fixed", top: 18, left: "50%", transform: "translateX(-50%)",
-      zIndex: 9999, padding: "13px 22px", borderRadius: 14,
-      background: toast.type === "err" ? C.red : C.green,
-      color: "#fff", fontWeight: 700, fontSize: 13.5,
-      boxShadow: "0 10px 36px rgba(0,0,0,0.18)", maxWidth: "88vw",
-      textAlign: "center", animation: "toastIn .3s cubic-bezier(.34,1.56,.64,1)",
-      whiteSpace: "pre-line", lineHeight: 1.5,
-    }}>{toast.msg}</div>
+    <div style={{ position: "fixed", top: 18, left: "50%", transform: "translateX(-50%)", zIndex: 9999, padding: "13px 22px", borderRadius: 14, background: toast.type === "err" ? C.red : C.green, color: "#fff", fontWeight: 700, fontSize: 13.5, boxShadow: "0 10px 36px rgba(0,0,0,0.18)", maxWidth: "88vw", textAlign: "center", animation: "toastIn .3s cubic-bezier(.34,1.56,.64,1)", whiteSpace: "pre-line", lineHeight: 1.5 }}>{toast.msg}</div>
+  );
+}
+
+// ── Modal ──────────────────────────────────────────
+function Modal({ show, onClose, title, children }) {
+  if (!show) return null;
+  return (
+    <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.5)", zIndex: 8000, display: "flex", alignItems: "center", justifyContent: "center", padding: 16 }}>
+      <div style={{ background: C.white, borderRadius: 20, padding: 24, width: "100%", maxWidth: 420, boxShadow: C.shadowLg, animation: "fadeUp .3s ease" }}>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 18 }}>
+          <div style={{ fontSize: 18, fontWeight: 800, color: C.text }}>{title}</div>
+          <button onClick={onClose} style={{ background: C.bg, border: "none", borderRadius: 8, width: 32, height: 32, cursor: "pointer", fontSize: 16, color: C.muted }}>✕</button>
+        </div>
+        {children}
+      </div>
+    </div>
   );
 }
 
@@ -99,20 +107,10 @@ function Inp({ label, value, onChange, type = "text", placeholder = "", req }) {
   const [focus, setFocus] = useState(false);
   return (
     <div style={{ marginBottom: 15 }}>
-      {label && <div style={{ color: C.textMid, fontSize: 10.5, fontWeight: 700, letterSpacing: "0.09em", textTransform: "uppercase", marginBottom: 5 }}>
-        {label}{req && <span style={{ color: C.red }}> *</span>}
-      </div>}
+      {label && <div style={{ color: C.textMid, fontSize: 10.5, fontWeight: 700, letterSpacing: "0.09em", textTransform: "uppercase", marginBottom: 5 }}>{label}{req && <span style={{ color: C.red }}> *</span>}</div>}
       <input type={type} value={value} onChange={(e) => onChange(e.target.value)} placeholder={placeholder}
         onFocus={() => setFocus(true)} onBlur={() => setFocus(false)}
-        style={{
-          width: "100%", padding: "12px 14px",
-          background: focus ? "#f0fbf4" : C.white,
-          border: `1.5px solid ${focus ? C.green : C.border}`,
-          borderRadius: 10, color: C.text, fontSize: 14, outline: "none",
-          boxSizing: "border-box", transition: "all .18s",
-          boxShadow: focus ? `0 0 0 3px ${C.greenPale}` : "none",
-          fontFamily: "inherit",
-        }} />
+        style={{ width: "100%", padding: "12px 14px", background: focus ? "#f0fbf4" : C.white, border: `1.5px solid ${focus ? C.green : C.border}`, borderRadius: 10, color: C.text, fontSize: 14, outline: "none", boxSizing: "border-box", transition: "all .18s", boxShadow: focus ? `0 0 0 3px ${C.greenPale}` : "none", fontFamily: "inherit" }} />
     </div>
   );
 }
@@ -125,28 +123,20 @@ function Btn({ children, onClick, v = "primary", sz = "md", full, disabled }) {
     ghost:   { bg: hov ? C.greenPale : C.white, color: C.green, border: `1.5px solid ${C.border}`, shadow: "none" },
     danger:  { bg: hov ? "#b5211a" : C.red, color: "#fff", border: "none", shadow: "none" },
     outline: { bg: "transparent", color: C.muted, border: `1.5px solid ${C.border}`, shadow: "none" },
+    gold:    { bg: hov ? "#c8860e" : C.gold, color: "#fff", border: "none", shadow: "0 4px 16px rgba(224,152,32,.28)" },
   };
   const szs = { sm: { p: "6px 13px", fs: 12 }, md: { p: "11px 22px", fs: 14 }, lg: { p: "14px 28px", fs: 15 } };
   const st = styles[v], z = szs[sz];
   return (
     <button onClick={onClick} disabled={disabled}
       onMouseEnter={() => setHov(true)} onMouseLeave={() => setHov(false)}
-      style={{
-        background: st.bg, color: st.color, border: st.border || "none",
-        padding: z.p, fontSize: z.fs, width: full ? "100%" : undefined,
-        borderRadius: 10, cursor: disabled ? "not-allowed" : "pointer",
-        fontWeight: 700, opacity: disabled ? 0.5 : 1, fontFamily: "inherit",
-        transition: "all .15s", transform: hov && !disabled ? "translateY(-1px)" : "none",
-        boxShadow: disabled ? "none" : st.shadow,
-      }}>{children}</button>
+      style={{ background: st.bg, color: st.color, border: st.border || "none", padding: z.p, fontSize: z.fs, width: full ? "100%" : undefined, borderRadius: 10, cursor: disabled ? "not-allowed" : "pointer", fontWeight: 700, opacity: disabled ? 0.5 : 1, fontFamily: "inherit", transition: "all .15s", transform: hov && !disabled ? "translateY(-1px)" : "none", boxShadow: disabled ? "none" : st.shadow }}>{children}</button>
   );
 }
 
 // ── Tag ────────────────────────────────────────────
 function Tag({ children, color, bg }) {
-  return (
-    <span style={{ padding: "4px 11px", borderRadius: 20, fontSize: 11, fontWeight: 700, background: bg || (color + "18"), color: color || C.green, letterSpacing: "0.03em" }}>{children}</span>
-  );
+  return <span style={{ padding: "4px 11px", borderRadius: 20, fontSize: 11, fontWeight: 700, background: bg || (color + "18"), color: color || C.green, letterSpacing: "0.03em" }}>{children}</span>;
 }
 
 // ── Bottom Nav ─────────────────────────────────────
@@ -174,9 +164,7 @@ function NavBar({ active, onTab, newBooking }) {
 function Header({ onBack, subtitle }) {
   return (
     <div style={{ background: C.white, borderBottom: `1px solid ${C.border}`, padding: "11px 16px", display: "flex", alignItems: "center", gap: 10, position: "sticky", top: 0, zIndex: 100, boxShadow: C.shadow }}>
-      {onBack && (
-        <button onClick={onBack} style={{ background: C.greenPale, border: "none", color: C.green, cursor: "pointer", borderRadius: 8, width: 34, height: 34, fontSize: 16, display: "flex", alignItems: "center", justifyContent: "center" }}>←</button>
-      )}
+      {onBack && <button onClick={onBack} style={{ background: C.greenPale, border: "none", color: C.green, cursor: "pointer", borderRadius: 8, width: 34, height: 34, fontSize: 16, display: "flex", alignItems: "center", justifyContent: "center" }}>←</button>}
       <div style={{ flex: 1 }}>
         <KGolfLogo h={26} />
         {subtitle && <div style={{ fontSize: 10.5, color: C.muted, marginTop: 1, paddingLeft: 42 }}>{subtitle}</div>}
@@ -192,6 +180,7 @@ export default function KGolfApp() {
   const [view, setView] = useState("login");
   const [isAdmin, setIsAdmin] = useState(false);
   const [tabView, setTabView] = useState("home");
+  const [ctrTab, setCtrTab] = useState("timetable"); // timetable | users
   const [user, setUser] = useState(null);
   const [bookings, setBookings] = useState([]);
   const [regUsers, setRegUsers] = useState([]);
@@ -210,32 +199,48 @@ export default function KGolfApp() {
   const [lf, setLf] = useState({ email: "", pass: "" });
   const [rf, setRf] = useState({ name: "", nick: "", email: "", phone: "", address: "", pass: "" });
 
+  // 비밀번호 찾기
+  const [showForgot, setShowForgot] = useState(false);
+  const [forgotEmail, setForgotEmail] = useState("");
+  const [forgotStep, setForgotStep] = useState(1); // 1=이메일입력 2=새비번입력
+  const [forgotNewPass, setForgotNewPass] = useState("");
+  const [forgotUser, setForgotUser] = useState(null);
+
+  // 유저 검색 (어드민)
+  const [userSearch, setUserSearch] = useState("");
+
   const pop = (msg, type = "ok") => { setToast({ msg, type }); setTimeout(() => setToast(null), 4000); };
 
-  // ── Firebase real-time listeners ──
+  // ── Firebase 실시간 리스너 (최적화: 1회 로드 후 실시간) ──
   useEffect(() => {
-    const unsubBkgs = onSnapshot(
-      doc(db, "kgolf", "bookings"),
-      (snap) => { if (snap.exists()) { try { setBookings(JSON.parse(snap.data().data || "[]")); } catch {} } setLoading(false); },
-      () => setLoading(false)
-    );
-    const unsubUsers = onSnapshot(
-      doc(db, "kgolf", "users"),
-      (snap) => { if (snap.exists()) { try { setRegUsers(JSON.parse(snap.data().data || "[]")); } catch {} } },
-      () => {}
-    );
-    return () => { unsubBkgs(); unsubUsers(); };
+    // 빠른 초기 로드를 위해 getDoc 먼저
+    Promise.all([
+      getDoc(doc(db, "kgolf", "bookings")),
+      getDoc(doc(db, "kgolf", "users")),
+    ]).then(([bSnap, uSnap]) => {
+      if (bSnap.exists()) { try { setBookings(JSON.parse(bSnap.data().data || "[]")); } catch {} }
+      if (uSnap.exists()) { try { setRegUsers(JSON.parse(uSnap.data().data || "[]")); } catch {} }
+      setLoading(false);
+    }).catch(() => setLoading(false));
+
+    // 실시간 업데이트
+    const unsubB = onSnapshot(doc(db, "kgolf", "bookings"), (snap) => {
+      if (snap.exists()) { try { setBookings(JSON.parse(snap.data().data || "[]")); } catch {} }
+    }, () => {});
+    const unsubU = onSnapshot(doc(db, "kgolf", "users"), (snap) => {
+      if (snap.exists()) { try { setRegUsers(JSON.parse(snap.data().data || "[]")); } catch {} }
+    }, () => {});
+    return () => { unsubB(); unsubU(); };
   }, []);
 
-  // ── Save helpers ──
-  const saveBkgs = async (b) => {
+  const saveBkgs = useCallback(async (b) => {
     setBookings(b);
-    try { await setDoc(doc(db, "kgolf", "bookings"), { data: JSON.stringify(b) }); } catch (e) { console.error("Save error:", e); }
-  };
-  const saveUsrs = async (u) => {
+    try { await setDoc(doc(db, "kgolf", "bookings"), { data: JSON.stringify(b) }); } catch (e) { console.error(e); }
+  }, []);
+  const saveUsrs = useCallback(async (u) => {
     setRegUsers(u);
-    try { await setDoc(doc(db, "kgolf", "users"), { data: JSON.stringify(u) }); } catch (e) { console.error("Save error:", e); }
-  };
+    try { await setDoc(doc(db, "kgolf", "users"), { data: JSON.stringify(u) }); } catch (e) { console.error(e); }
+  }, []);
 
   // ── Slot helpers ──
   const isTaken = (date, bay, hour) => bookings.some((b) => b.date === date && b.bay === bay && b.hours?.includes(hour) && b.status === "confirmed");
@@ -245,7 +250,6 @@ export default function KGolfApp() {
     bookings.filter((b) => b.date === date && b.bay === bay && b.status === "confirmed").forEach((b) => b.hours?.forEach((h) => booked.add(h)));
     return HOURS.length - booked.size;
   };
-
   const toggleHour = (h) => {
     if (isTaken(selDate, selBay, h)) return;
     const next = selHours.includes(h) ? selHours.filter((x) => x !== h) : [...selHours, h];
@@ -255,7 +259,7 @@ export default function KGolfApp() {
 
   // ── Auth ──
   const doLogin = () => {
-    if (lf.email === "admin@kgolf.nz" && lf.pass === "admin1234") { setIsAdmin(true); setView("counter"); return; }
+    if (lf.email === "admin@kgolf.nz" && lf.pass === "admin123") { setIsAdmin(true); setView("counter"); return; }
     if (lf.email === "admin@kgolf.nz") { pop("Invalid password.", "err"); return; }
     const u = regUsers.find((u) => u.email === lf.email && u.pass === lf.pass);
     if (!u) { pop("Incorrect email or password.", "err"); return; }
@@ -270,6 +274,22 @@ export default function KGolfApp() {
     await saveUsrs([...regUsers, nu]);
     setUser(nu); setIsAdmin(false); setTabView("home"); setView("app");
     pop(`Welcome to KGolf, ${rf.nick || rf.name}! 🎉`);
+  };
+
+  // ── 비밀번호 찾기 ──
+  const doForgotStep1 = () => {
+    const u = regUsers.find((u) => u.email === forgotEmail);
+    if (!u) { pop("Email not found.", "err"); return; }
+    setForgotUser(u);
+    setForgotStep(2);
+  };
+  const doForgotStep2 = async () => {
+    if (!forgotNewPass || forgotNewPass.length < 6) { pop("Password must be at least 6 characters.", "err"); return; }
+    const updated = regUsers.map((u) => u.id === forgotUser.id ? { ...u, pass: forgotNewPass } : u);
+    await saveUsrs(updated);
+    pop("Password updated! Please sign in. ✅");
+    setShowForgot(false);
+    setForgotEmail(""); setForgotNewPass(""); setForgotStep(1); setForgotUser(null);
   };
 
   const doConfirm = async () => {
@@ -308,6 +328,13 @@ export default function KGolfApp() {
     setShowAddForm(false); pop(`Bay ${bay} · ${fmt(hour)} booked!`);
   };
 
+  // 어드민 유저 삭제
+  const doDeleteUser = async (uid) => {
+    if (!window.confirm("Delete this user?")) return;
+    const updated = regUsers.filter((u) => u.id !== uid);
+    await saveUsrs(updated); pop("User deleted.");
+  };
+
   const myBkgs = user ? bookings.filter((b) => b.userId === user.id).sort((a, b) => b.createdAt.localeCompare(a.createdAt)) : [];
 
   const CSS = `
@@ -326,14 +353,38 @@ export default function KGolfApp() {
     .date-btn:hover{border-color:${C.green}!important;}
     .bkg-card:hover{box-shadow:0 4px 18px rgba(27,138,61,.11)!important;}
     .grid-cell-booked:hover{opacity:.7!important;cursor:pointer!important;}
+    .user-row:hover{background:#f5fbf7!important;}
   `;
+
+  // ── 비밀번호 찾기 모달 ──
+  const ForgotModal = (
+    <Modal show={showForgot} onClose={() => { setShowForgot(false); setForgotStep(1); setForgotEmail(""); setForgotNewPass(""); }} title="🔑 Reset Password">
+      {forgotStep === 1 ? (
+        <>
+          <p style={{ color: C.muted, fontSize: 13, marginBottom: 18 }}>Enter your registered email address.</p>
+          <Inp label="Email" value={forgotEmail} onChange={setForgotEmail} type="email" placeholder="your@email.com" />
+          <Btn full v="primary" onClick={doForgotStep1}>Find Account →</Btn>
+        </>
+      ) : (
+        <>
+          <div style={{ background: C.greenPale, borderRadius: 10, padding: "12px 14px", marginBottom: 16 }}>
+            <div style={{ fontSize: 12, color: C.muted }}>Account found</div>
+            <div style={{ fontSize: 16, fontWeight: 700, color: C.green }}>{forgotUser?.name}</div>
+          </div>
+          <Inp label="New Password" value={forgotNewPass} onChange={setForgotNewPass} type="password" placeholder="Minimum 6 characters" />
+          <Btn full v="primary" onClick={doForgotStep2}>Update Password ✅</Btn>
+        </>
+      )}
+    </Modal>
+  );
 
   // ── Loading splash ──
   if (loading) return (
-    <div style={{ minHeight: "100vh", background: C.bg, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 20 }}>
+    <div style={{ minHeight: "100vh", background: `linear-gradient(155deg,#e5f5ea 0%,#f2f7f4 45%,#fff9ee 100%)`, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 20 }}>
       <style>{CSS}</style>
-      <KGolfLogo h={40} />
+      <KGolfLogo h={44} />
       <div style={{ width: 28, height: 28, border: `3px solid ${C.greenPale2}`, borderTop: `3px solid ${C.green}`, borderRadius: "50%", animation: "spin .8s linear infinite" }} />
+      <div style={{ color: C.muted, fontSize: 12 }}>Loading...</div>
     </div>
   );
 
@@ -344,6 +395,7 @@ export default function KGolfApp() {
     <div style={{ minHeight: "100vh", background: `linear-gradient(155deg,#e5f5ea 0%,#f2f7f4 45%,#fff9ee 100%)`, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", padding: "24px 16px" }}>
       <style>{CSS}</style>
       <Toast toast={toast} />
+      {ForgotModal}
       <div style={{ textAlign: "center", marginBottom: 36, animation: "fadeUp .5s ease" }}>
         <div style={{ marginBottom: 14 }}><KGolfLogo h={40} /></div>
         <div style={{ color: C.muted, fontSize: 13, letterSpacing: "0.12em", textTransform: "uppercase", fontWeight: 600 }}>Indoor Screen Golf · New Zealand</div>
@@ -353,6 +405,12 @@ export default function KGolfApp() {
         <div style={{ fontSize: 22, fontWeight: 800, color: C.text, marginBottom: 22 }}>Sign In</div>
         <Inp label="Email" value={lf.email} onChange={(v) => setLf((p) => ({ ...p, email: v }))} type="email" placeholder="your@email.com" />
         <Inp label="Password" value={lf.pass} onChange={(v) => setLf((p) => ({ ...p, pass: v }))} type="password" placeholder="••••••••" />
+        {/* 비밀번호 찾기 링크 */}
+        <div style={{ textAlign: "right", marginTop: -8, marginBottom: 16 }}>
+          <button onClick={() => { setShowForgot(true); setForgotStep(1); }} style={{ background: "none", border: "none", color: C.green, fontSize: 12, cursor: "pointer", fontWeight: 600 }}>
+            Forgot password?
+          </button>
+        </div>
         <div style={{ marginBottom: 12 }}><Btn full v="primary" sz="lg" onClick={doLogin}>Sign In</Btn></div>
         <Btn full v="ghost" onClick={() => setView("register")}>Create Account</Btn>
         <div style={{ marginTop: 16, padding: "12px 14px", background: "#fffbf0", borderRadius: 10, fontSize: 11.5, color: "#7a6020", border: `1px solid #f0d080` }}>
@@ -464,7 +522,7 @@ export default function KGolfApp() {
         <div style={{ minHeight: "100vh", background: C.bg }}>
           <style>{CSS}</style>
           <Toast toast={toast} />
-          <Header onBack={() => setTabView("home")} subtitle={`Bay ${selBay} · ${fmtDate(selDate)} · tap to select hours`} />
+          <Header onBack={() => setTabView("home")} subtitle={`Bay ${selBay} · ${fmtDate(selDate)}`} />
           <div style={{ maxWidth: 500, margin: "0 auto", padding: "16px 16px 0", animation: "fadeUp .35s ease" }}>
             <div style={{ display: "flex", gap: 14, marginBottom: 14, flexWrap: "wrap" }}>
               {[[C.white, C.border, "Available"], [C.green, C.green, "Selected"], [C.bg, C.border, "Booked"]].map(([bg, bdr, l]) => (
@@ -477,16 +535,21 @@ export default function KGolfApp() {
             <div style={{ display: "grid", gridTemplateColumns: "repeat(3,1fr)", gap: 8, marginBottom: 20 }}>
               {HOURS.map((h) => {
                 const taken = isTaken(selDate, selBay, h), sel = selHours.includes(h);
+                const bkg = taken ? getSlotBkg(selDate, selBay, h) : null;
                 return (
                   <button key={h} className={!taken && !sel ? "slot-free" : ""}
                     onClick={() => !taken && toggleHour(h)} disabled={taken}
-                    style={{ padding: "14px 6px", borderRadius: 12, background: sel ? C.green : taken ? C.bg : C.white, border: `1.5px solid ${sel ? C.green : C.border}`, color: sel ? "#fff" : taken ? C.muted : C.text, cursor: taken ? "not-allowed" : "pointer", textAlign: "center", opacity: taken ? .4 : 1, transition: "all .12s", boxShadow: sel ? "0 4px 14px rgba(27,138,61,.25)" : taken ? "none" : C.shadow }}>
+                    style={{ padding: "14px 6px", borderRadius: 12, background: sel ? C.green : taken ? C.bg : C.white, border: `1.5px solid ${sel ? C.green : C.border}`, color: sel ? "#fff" : taken ? C.muted : C.text, cursor: taken ? "not-allowed" : "pointer", textAlign: "center", opacity: taken ? .5 : 1, transition: "all .12s", boxShadow: sel ? "0 4px 14px rgba(27,138,61,.25)" : taken ? "none" : C.shadow }}>
                     <div style={{ fontSize: 15, fontWeight: 800 }}>{fmt(h)}</div>
-                    <div style={{ fontSize: 10, marginTop: 4, fontWeight: 600, color: sel ? "#ffffffcc" : C.muted }}>{taken ? "Booked" : sel ? "✓ Selected" : "Free"}</div>
+                    {/* 예약자 이름만 표시 (개인정보 보호) */}
+                    <div style={{ fontSize: 10, marginTop: 4, fontWeight: 600, color: sel ? "#ffffffcc" : C.muted }}>
+                      {taken ? (bkg ? displayName(bkg) : "Booked") : sel ? "✓ Selected" : "Free"}
+                    </div>
                   </button>
                 );
               })}
             </div>
+
             {/* All Bays Overview */}
             <div style={{ background: C.white, borderRadius: 16, padding: 14, border: `1px solid ${C.border}`, boxShadow: C.shadow, marginBottom: 20 }}>
               <div style={{ fontSize: 11, fontWeight: 700, color: C.textMid, textTransform: "uppercase", letterSpacing: "0.09em", marginBottom: 10 }}>📊 All Bays — {fmtDate(selDate)}</div>
@@ -496,7 +559,7 @@ export default function KGolfApp() {
               </div>
               {Array.from({ length: NUM_BAYS }, (_, i) => i + 1).map(bay => (
                 <div key={bay} style={{ display: "grid", gridTemplateColumns: "36px repeat(14,1fr)", gap: 2, marginBottom: 2 }}>
-                  <div style={{ display: "flex", alignItems: "center", justifyContent: "center", background: bay === selBay ? C.green : C.greenPale, borderRadius: 5, fontSize: 9, fontWeight: 800, color: bay === selBay ? "#fff" : C.green, border: bay === selBay ? `1px solid ${C.green}` : "none" }}>B{bay}</div>
+                  <div style={{ display: "flex", alignItems: "center", justifyContent: "center", background: bay === selBay ? C.green : C.greenPale, borderRadius: 5, fontSize: 9, fontWeight: 800, color: bay === selBay ? "#fff" : C.green }}>B{bay}</div>
                   {HOURS.map(h => {
                     const taken = isTaken(selDate, bay, h);
                     const isMine = bay === selBay && selHours.includes(h);
@@ -507,14 +570,8 @@ export default function KGolfApp() {
                   })}
                 </div>
               ))}
-              <div style={{ display: "flex", gap: 14, marginTop: 10, fontSize: 10, color: C.muted, flexWrap: "wrap" }}>
-                {[[C.green, C.green, "Your selection"], ["#f5b8b2", "#e08080", "Booked (this bay)"], ["#d0d8d4", "#b8c4be", "Booked (other bays)"]].map(([bg, bdr, label]) => (
-                  <div key={label} style={{ display: "flex", alignItems: "center", gap: 5 }}>
-                    <div style={{ width: 14, height: 10, borderRadius: 2, background: bg, border: `1px solid ${bdr}` }} /><span>{label}</span>
-                  </div>
-                ))}
-              </div>
             </div>
+
             {selHours.length > 0 && (
               <div style={{ background: C.white, borderRadius: 18, padding: 18, border: `1.5px solid ${C.green}44`, boxShadow: C.shadowMd, marginBottom: 20, animation: "fadeUp .3s ease" }}>
                 <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 14 }}>
@@ -734,114 +791,215 @@ export default function KGolfApp() {
         <style>{CSS}</style>
         <div style={{ fontSize: 48 }}>🔒</div>
         <div style={{ fontSize: 20, fontWeight: 800, color: C.text }}>Access Restricted</div>
-        <div style={{ color: C.muted, fontSize: 14 }}>Staff credentials required</div>
         <Btn v="primary" onClick={() => { setIsAdmin(false); setView("login"); }}>← Back to Login</Btn>
       </div>
     );
 
     const todayBkgs = bookings.filter((b) => b.date === ctrDate && b.status === "confirmed").sort((a, b) => a.hours[0] - b.hours[0] || a.bay - b.bay);
+    const filteredUsers = regUsers.filter(u =>
+      u.name?.toLowerCase().includes(userSearch.toLowerCase()) ||
+      u.email?.toLowerCase().includes(userSearch.toLowerCase()) ||
+      u.nick?.toLowerCase().includes(userSearch.toLowerCase()) ||
+      u.phone?.includes(userSearch)
+    );
+
     return (
       <div style={{ minHeight: "100vh", background: "#f0f6f2", color: C.text }}>
         <style>{CSS}</style>
         <Toast toast={toast} />
-        <div style={{ background: C.white, borderBottom: `1px solid ${C.border}`, padding: "11px 20px", display: "flex", alignItems: "center", gap: 14, boxShadow: C.shadow }}>
+
+        {/* Admin Header */}
+        <div style={{ background: C.white, borderBottom: `1px solid ${C.border}`, padding: "11px 20px", display: "flex", alignItems: "center", gap: 14, boxShadow: C.shadow, position: "sticky", top: 0, zIndex: 100 }}>
           <KGolfLogo h={22} />
           <div style={{ display: "flex", gap: 8 }}>
             <Tag color={C.greenLight}>● LIVE</Tag>
-            <Tag color={C.gold} bg={C.gold + "18"}>Counter Dashboard</Tag>
+            <Tag color={C.gold} bg={C.gold + "18"}>Admin</Tag>
           </div>
           <div style={{ flex: 1 }} />
           <button onClick={() => { setIsAdmin(false); setView("login"); }} style={{ background: C.bg, border: `1px solid ${C.border}`, color: C.textMid, borderRadius: 8, padding: "7px 14px", cursor: "pointer", fontSize: 12, fontWeight: 600 }}>← Sign Out</button>
         </div>
-        <div style={{ padding: "10px 20px", display: "flex", gap: 8, overflowX: "auto", borderBottom: `1px solid ${C.border}`, background: C.white }}>
-          {DATES.slice(0, 7).map((d, i) => (
-            <button key={d} onClick={() => setCtrDate(d)} style={{ flexShrink: 0, padding: "8px 16px", borderRadius: 10, background: d === ctrDate ? C.green : C.bg, border: `1.5px solid ${d === ctrDate ? C.green : C.border}`, color: d === ctrDate ? "#fff" : C.text, cursor: "pointer", fontWeight: 700, fontSize: 12, boxShadow: d === ctrDate ? "0 4px 14px rgba(27,138,61,.25)" : "none", transition: "all .15s" }}>{i === 0 ? "Today" : fmtDate(d)}</button>
+
+        {/* Tab bar */}
+        <div style={{ background: C.white, borderBottom: `1px solid ${C.border}`, display: "flex", padding: "0 20px" }}>
+          {[["timetable", "📅 Timetable"], ["users", `👥 Members (${regUsers.length})`]].map(([id, label]) => (
+            <button key={id} onClick={() => setCtrTab(id)} style={{ padding: "14px 20px", border: "none", background: "transparent", cursor: "pointer", fontWeight: 700, fontSize: 13, color: ctrTab === id ? C.green : C.muted, borderBottom: ctrTab === id ? `2.5px solid ${C.green}` : "2.5px solid transparent", transition: "all .15s" }}>{label}</button>
           ))}
         </div>
-        <div style={{ padding: "16px 20px" }}>
-          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 14 }}>
-            <div style={{ fontWeight: 700, fontSize: 15 }}>Timetable — <span style={{ color: C.green }}>{fmtDate(ctrDate)}</span><span style={{ marginLeft: 10, fontSize: 12, color: C.muted }}>({todayBkgs.length} bookings)</span></div>
-            <button onClick={() => setShowAddForm(p => !p)} style={{ background: showAddForm ? C.bg : C.green, border: `1.5px solid ${showAddForm ? C.border : C.green}`, borderRadius: 10, padding: "8px 16px", color: showAddForm ? C.textMid : "#fff", fontWeight: 700, fontSize: 13, cursor: "pointer", boxShadow: showAddForm ? "none" : "0 4px 14px rgba(27,138,61,.25)", transition: "all .15s" }}>{showAddForm ? "✕ Close" : "+ Add Booking"}</button>
-          </div>
-          {showAddForm && (
-            <div style={{ background: C.white, borderRadius: 14, padding: 18, border: `1.5px solid ${C.greenPale2}`, marginBottom: 16, animation: "fadeUp .3s ease", boxShadow: C.shadow }}>
-              <div style={{ fontSize: 14, fontWeight: 700, marginBottom: 14 }}>+ Add Walk-in Booking</div>
-              <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill,minmax(140px,1fr))", gap: 10, marginBottom: 10 }}>
-                <Inp label="Customer Name *" value={af.name} onChange={(v) => setAf(p => ({ ...p, name: v }))} placeholder="John Smith" />
-                <Inp label="Phone" value={af.phone} onChange={(v) => setAf(p => ({ ...p, phone: v }))} placeholder="+64 21 xxx" />
+
+        {/* ── 타임테이블 탭 ── */}
+        {ctrTab === "timetable" && (
+          <>
+            {/* Date tabs */}
+            <div style={{ padding: "10px 20px", display: "flex", gap: 8, overflowX: "auto", borderBottom: `1px solid ${C.border}`, background: C.white }}>
+              {DATES.slice(0, 7).map((d, i) => (
+                <button key={d} onClick={() => setCtrDate(d)} style={{ flexShrink: 0, padding: "8px 16px", borderRadius: 10, background: d === ctrDate ? C.green : C.bg, border: `1.5px solid ${d === ctrDate ? C.green : C.border}`, color: d === ctrDate ? "#fff" : C.text, cursor: "pointer", fontWeight: 700, fontSize: 12, boxShadow: d === ctrDate ? "0 4px 14px rgba(27,138,61,.25)" : "none", transition: "all .15s" }}>{i === 0 ? "Today" : fmtDate(d)}</button>
+              ))}
+            </div>
+
+            <div style={{ padding: "16px 20px" }}>
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 14 }}>
+                <div style={{ fontWeight: 700, fontSize: 15 }}>Timetable — <span style={{ color: C.green }}>{fmtDate(ctrDate)}</span><span style={{ marginLeft: 10, fontSize: 12, color: C.muted }}>({todayBkgs.length} bookings)</span></div>
+                <button onClick={() => setShowAddForm(p => !p)} style={{ background: showAddForm ? C.bg : C.green, border: `1.5px solid ${showAddForm ? C.border : C.green}`, borderRadius: 10, padding: "8px 16px", color: showAddForm ? C.textMid : "#fff", fontWeight: 700, fontSize: 13, cursor: "pointer", boxShadow: showAddForm ? "none" : "0 4px 14px rgba(27,138,61,.25)", transition: "all .15s" }}>{showAddForm ? "✕ Close" : "+ Add Booking"}</button>
               </div>
-              <div style={{ display: "grid", gridTemplateColumns: "repeat(3,1fr)", gap: 10 }}>
-                {[["Date", "date", DATES.slice(0, 7).map((d, i) => ({ v: d, l: i === 0 ? "Today" : fmtDate(d) }))], ["Bay", "bay", Array.from({ length: NUM_BAYS }, (_, i) => ({ v: String(i + 1), l: `Bay ${i + 1}` }))], ["Time", "hour", HOURS.map(h => ({ v: String(h), l: fmt(h) }))]].map(([lbl, field, opts]) => (
-                  <div key={field}>
-                    <div style={{ fontSize: 10, color: C.muted, textTransform: "uppercase", letterSpacing: "0.08em", fontWeight: 700, marginBottom: 6 }}>{lbl}</div>
-                    <select value={af[field]} onChange={(e) => setAf(p => ({ ...p, [field]: e.target.value }))} style={{ width: "100%", padding: "10px", background: C.bg, border: `1.5px solid ${C.border}`, borderRadius: 9, color: C.text, fontSize: 13, outline: "none" }}>
-                      {opts.map(o => <option key={o.v} value={o.v}>{o.l}</option>)}
-                    </select>
+
+              {showAddForm && (
+                <div style={{ background: C.white, borderRadius: 14, padding: 18, border: `1.5px solid ${C.greenPale2}`, marginBottom: 16, animation: "fadeUp .3s ease", boxShadow: C.shadow }}>
+                  <div style={{ fontSize: 14, fontWeight: 700, marginBottom: 14 }}>+ Add Walk-in Booking</div>
+                  <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill,minmax(140px,1fr))", gap: 10, marginBottom: 10 }}>
+                    <Inp label="Customer Name *" value={af.name} onChange={(v) => setAf(p => ({ ...p, name: v }))} placeholder="John Smith" />
+                    <Inp label="Phone" value={af.phone} onChange={(v) => setAf(p => ({ ...p, phone: v }))} placeholder="+64 21 xxx" />
+                  </div>
+                  <div style={{ display: "grid", gridTemplateColumns: "repeat(3,1fr)", gap: 10 }}>
+                    {[["Date", "date", DATES.slice(0, 7).map((d, i) => ({ v: d, l: i === 0 ? "Today" : fmtDate(d) }))], ["Bay", "bay", Array.from({ length: NUM_BAYS }, (_, i) => ({ v: String(i + 1), l: `Bay ${i + 1}` }))], ["Time", "hour", HOURS.map(h => ({ v: String(h), l: fmt(h) }))]].map(([lbl, field, opts]) => (
+                      <div key={field}>
+                        <div style={{ fontSize: 10, color: C.muted, textTransform: "uppercase", letterSpacing: "0.08em", fontWeight: 700, marginBottom: 6 }}>{lbl}</div>
+                        <select value={af[field]} onChange={(e) => setAf(p => ({ ...p, [field]: e.target.value }))} style={{ width: "100%", padding: "10px", background: C.bg, border: `1.5px solid ${C.border}`, borderRadius: 9, color: C.text, fontSize: 13, outline: "none" }}>
+                          {opts.map(o => <option key={o.v} value={o.v}>{o.l}</option>)}
+                        </select>
+                      </div>
+                    ))}
+                  </div>
+                  <div style={{ marginTop: 14 }}><Btn v="primary" sz="md" onClick={doAdminAdd}>Add Booking</Btn></div>
+                </div>
+              )}
+
+              {/* Grid */}
+              <div style={{ overflowX: "auto", borderRadius: 14, border: `1px solid ${C.border}`, background: C.white, boxShadow: C.shadow, marginBottom: 20 }}>
+                <div style={{ minWidth: 820, padding: 12 }}>
+                  <div style={{ display: "grid", gridTemplateColumns: "60px repeat(14,1fr)", gap: 2, marginBottom: 4 }}>
+                    <div />
+                    {HOURS.map(h => <div key={h} style={{ fontSize: 9, color: C.muted, textAlign: "center", padding: "3px 1px", fontWeight: 700 }}>{fmt(h)}</div>)}
+                  </div>
+                  {Array.from({ length: NUM_BAYS }, (_, i) => i + 1).map(bay => (
+                    <div key={bay} style={{ display: "grid", gridTemplateColumns: "60px repeat(14,1fr)", gap: 2, marginBottom: 2 }}>
+                      <div style={{ display: "flex", alignItems: "center", justifyContent: "center", background: C.greenPale, borderRadius: 7, fontSize: 11, fontWeight: 800, color: C.green, padding: "6px 2px" }}>B{bay}</div>
+                      {HOURS.map(h => {
+                        const bkg = getSlotBkg(ctrDate, bay, h);
+                        return (
+                          <div key={h} className={bkg ? "grid-cell-booked" : ""} onClick={() => bkg && doCancel(bkg.id)}
+                            title={bkg ? `${bkg.userName} · ${bkg.userPhone !== "-" ? bkg.userPhone : ""} · ${bkg.userEmail}\nClick to cancel` : ""}
+                            style={{ minHeight: 42, borderRadius: 6, background: bkg ? (bkg.adminCreated ? "#d4f0df" : "#dbeeff") : C.bg, border: `1px solid ${bkg ? (bkg.adminCreated ? C.greenPale2 : "#b3d4ff") : C.border}`, cursor: bkg ? "pointer" : "default", display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", padding: "2px 1px", overflow: "hidden", transition: "opacity .15s" }}>
+                            {bkg ? (
+                              <>
+                                {/* 어드민은 이름 전체 표시 */}
+                                <div style={{ fontSize: 8, fontWeight: 700, color: bkg.adminCreated ? C.green : "#1a5fa8", textAlign: "center", lineHeight: 1.2, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", maxWidth: "100%", padding: "0 1px" }}>{bkg.userNick || bkg.userName}</div>
+                                {bkg.adminCreated && <div style={{ fontSize: 7, color: C.green, marginTop: 1 }}>📋</div>}
+                              </>
+                            ) : <div style={{ width: 10, height: 1, background: C.border, opacity: .4 }} />}
+                          </div>
+                        );
+                      })}
+                    </div>
+                  ))}
+                </div>
+              </div>
+
+              {/* Legend */}
+              <div style={{ display: "flex", gap: 18, marginBottom: 18, fontSize: 11, color: C.muted }}>
+                {[["#dbeeff", "#b3d4ff", "#1a5fa8", "App Booking"], ["#d4f0df", C.greenPale2, C.green, "Counter Booking"]].map(([bg, bdr, col, label]) => (
+                  <div key={label} style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                    <div style={{ width: 16, height: 11, borderRadius: 3, background: bg, border: `1px solid ${bdr}` }} />
+                    <span style={{ color: col, fontWeight: 600 }}>{label}</span>
                   </div>
                 ))}
+                <span>· Hover for details · Click to cancel</span>
               </div>
-              <div style={{ marginTop: 14 }}><Btn v="primary" sz="md" onClick={doAdminAdd}>Add Booking</Btn></div>
+
+              {/* Booking list */}
+              <div style={{ background: C.white, borderRadius: 16, padding: 18, border: `1px solid ${C.border}`, boxShadow: C.shadow }}>
+                <div style={{ fontSize: 15, fontWeight: 700, marginBottom: 14 }}>Booking List <span style={{ fontSize: 12, color: C.muted, fontWeight: 400 }}>({todayBkgs.length})</span></div>
+                {todayBkgs.length === 0 ? (
+                  <div style={{ color: C.muted, fontSize: 13, textAlign: "center", padding: "20px 0" }}>No bookings for this date</div>
+                ) : (
+                  <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill,minmax(252px,1fr))", gap: 8 }}>
+                    {todayBkgs.map((b) => {
+                      const s = [...b.hours].sort((a, c) => a - c);
+                      return (
+                        <div key={b.id} style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "11px 14px", background: C.bg, borderRadius: 10, border: `1px solid ${C.border}` }}>
+                          <div>
+                            <div style={{ fontSize: 13, fontWeight: 700, color: C.green }}>Bay {b.bay} · {fmt(s[0])}–{fmt(s[s.length - 1] + 1)}</div>
+                            {/* 어드민은 전체 정보 표시 */}
+                            <div style={{ fontSize: 11, color: C.textMid, marginTop: 1, fontWeight: 600 }}>{b.userName} {b.userNick ? `(${b.userNick})` : ""}</div>
+                            <div style={{ fontSize: 10, color: C.muted, marginTop: 1 }}>{b.userPhone !== "-" ? b.userPhone : ""} {b.userEmail ? `· ${b.userEmail}` : ""} {b.adminCreated ? "📋" : "📱"}</div>
+                          </div>
+                          <button onClick={() => doCancel(b.id)} style={{ background: "#fde8e6", border: `1px solid #f5b8b2`, color: C.red, borderRadius: 7, padding: "5px 10px", cursor: "pointer", fontSize: 11, fontWeight: 700, flexShrink: 0, marginLeft: 8 }}>Cancel</button>
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
+              </div>
             </div>
-          )}
-          <div style={{ overflowX: "auto", borderRadius: 14, border: `1px solid ${C.border}`, background: C.white, boxShadow: C.shadow, marginBottom: 20 }}>
-            <div style={{ minWidth: 820, padding: 12 }}>
-              <div style={{ display: "grid", gridTemplateColumns: "60px repeat(14,1fr)", gap: 2, marginBottom: 4 }}>
-                <div />
-                {HOURS.map(h => <div key={h} style={{ fontSize: 9, color: C.muted, textAlign: "center", padding: "3px 1px", fontWeight: 700 }}>{fmt(h)}</div>)}
+          </>
+        )}
+
+        {/* ── 회원 목록 탭 ── */}
+        {ctrTab === "users" && (
+          <div style={{ padding: "16px 20px" }}>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 16 }}>
+              <div style={{ fontWeight: 700, fontSize: 15 }}>
+                Members <span style={{ fontSize: 12, color: C.muted, fontWeight: 400 }}>({regUsers.length} registered)</span>
               </div>
-              {Array.from({ length: NUM_BAYS }, (_, i) => i + 1).map(bay => (
-                <div key={bay} style={{ display: "grid", gridTemplateColumns: "60px repeat(14,1fr)", gap: 2, marginBottom: 2 }}>
-                  <div style={{ display: "flex", alignItems: "center", justifyContent: "center", background: C.greenPale, borderRadius: 7, fontSize: 11, fontWeight: 800, color: C.green, padding: "6px 2px" }}>B{bay}</div>
-                  {HOURS.map(h => {
-                    const bkg = getSlotBkg(ctrDate, bay, h);
-                    return (
-                      <div key={h} className={bkg ? "grid-cell-booked" : ""} onClick={() => bkg && doCancel(bkg.id)}
-                        title={bkg ? `${bkg.userName}\n${bkg.userPhone !== "-" ? bkg.userPhone : ""}\nClick to cancel` : ""}
-                        style={{ minHeight: 42, borderRadius: 6, background: bkg ? (bkg.adminCreated ? "#d4f0df" : "#dbeeff") : C.bg, border: `1px solid ${bkg ? (bkg.adminCreated ? C.greenPale2 : "#b3d4ff") : C.border}`, cursor: bkg ? "pointer" : "default", display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", padding: "2px 1px", overflow: "hidden", transition: "opacity .15s" }}>
-                        {bkg ? (
-                          <>
-                            <div style={{ fontSize: 8, fontWeight: 700, color: bkg.adminCreated ? C.green : "#1a5fa8", textAlign: "center", lineHeight: 1.2, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", maxWidth: "100%", padding: "0 1px" }}>{bkg.userNick || bkg.userName}</div>
-                            {bkg.adminCreated && <div style={{ fontSize: 7, color: C.green, marginTop: 1 }}>📋</div>}
-                          </>
-                        ) : <div style={{ width: 10, height: 1, background: C.border, opacity: .4 }} />}
-                      </div>
-                    );
-                  })}
+            </div>
+
+            {/* 검색 */}
+            <div style={{ marginBottom: 16, position: "relative" }}>
+              <input
+                value={userSearch}
+                onChange={(e) => setUserSearch(e.target.value)}
+                placeholder="🔍  Search by name, email, phone..."
+                style={{ width: "100%", padding: "12px 16px", background: C.white, border: `1.5px solid ${C.border}`, borderRadius: 12, fontSize: 14, outline: "none", boxSizing: "border-box", boxShadow: C.shadow }}
+              />
+            </div>
+
+            {/* 통계 */}
+            <div style={{ display: "grid", gridTemplateColumns: "repeat(3,1fr)", gap: 10, marginBottom: 20 }}>
+              {[
+                ["👥", "Total Members", regUsers.length],
+                ["📅", "Total Bookings", bookings.filter(b => b.status === "confirmed" && b.userId !== "admin").length],
+                ["✅", "Active Today", bookings.filter(b => b.date === DATES[0] && b.status === "confirmed").length],
+              ].map(([icon, label, val]) => (
+                <div key={label} style={{ background: C.white, borderRadius: 12, padding: "14px 12px", textAlign: "center", border: `1px solid ${C.border}`, boxShadow: C.shadow }}>
+                  <div style={{ fontSize: 22 }}>{icon}</div>
+                  <div style={{ fontSize: 22, fontWeight: 900, color: C.green, marginTop: 4 }}>{val}</div>
+                  <div style={{ fontSize: 10, color: C.muted, marginTop: 2 }}>{label}</div>
                 </div>
               ))}
             </div>
-          </div>
-          <div style={{ display: "flex", gap: 18, marginBottom: 18, fontSize: 11, color: C.muted }}>
-            {[["#dbeeff", "#b3d4ff", "#1a5fa8", "App Booking"], ["#d4f0df", C.greenPale2, C.green, "Counter Booking"]].map(([bg, bdr, col, label]) => (
-              <div key={label} style={{ display: "flex", alignItems: "center", gap: 6 }}>
-                <div style={{ width: 16, height: 11, borderRadius: 3, background: bg, border: `1px solid ${bdr}` }} />
-                <span style={{ color: col, fontWeight: 600 }}>{label}</span>
-              </div>
-            ))}
-            <span>· Click a cell to cancel</span>
-          </div>
-          <div style={{ background: C.white, borderRadius: 16, padding: 18, border: `1px solid ${C.border}`, boxShadow: C.shadow }}>
-            <div style={{ fontSize: 15, fontWeight: 700, marginBottom: 14 }}>Booking List <span style={{ fontSize: 12, color: C.muted, fontWeight: 400 }}>({todayBkgs.length})</span></div>
-            {todayBkgs.length === 0 ? (
-              <div style={{ color: C.muted, fontSize: 13, textAlign: "center", padding: "20px 0" }}>No bookings for this date</div>
-            ) : (
-              <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill,minmax(252px,1fr))", gap: 8 }}>
-                {todayBkgs.map((b) => {
-                  const s = [...b.hours].sort((a, c) => a - c);
-                  return (
-                    <div key={b.id} style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "11px 14px", background: C.bg, borderRadius: 10, border: `1px solid ${C.border}` }}>
-                      <div>
-                        <div style={{ fontSize: 13, fontWeight: 700, color: C.green }}>Bay {b.bay} · {fmt(s[0])}–{fmt(s[s.length - 1] + 1)}</div>
-                        <div style={{ fontSize: 11, color: C.muted, marginTop: 2 }}>{b.userName}{b.userPhone !== "-" ? ` · ${b.userPhone}` : ""} {b.adminCreated ? "📋" : "📱"}</div>
-                      </div>
-                      <button onClick={() => doCancel(b.id)} style={{ background: C.redPale, border: `1px solid #f5b8b2`, color: C.red, borderRadius: 7, padding: "5px 10px", cursor: "pointer", fontSize: 11, fontWeight: 700 }}>Cancel</button>
+
+            {/* 유저 리스트 */}
+            <div style={{ background: C.white, borderRadius: 16, border: `1px solid ${C.border}`, boxShadow: C.shadow, overflow: "hidden" }}>
+              {filteredUsers.length === 0 ? (
+                <div style={{ padding: "40px 20px", textAlign: "center", color: C.muted }}>No members found</div>
+              ) : filteredUsers.map((u, idx) => {
+                const userBkgs = bookings.filter(b => b.userId === u.id && b.status === "confirmed").length;
+                return (
+                  <div key={u.id} className="user-row" style={{ display: "flex", alignItems: "center", gap: 14, padding: "14px 18px", borderBottom: idx < filteredUsers.length - 1 ? `1px solid ${C.border}` : "none", transition: "background .15s" }}>
+                    {/* 아바타 */}
+                    <div style={{ width: 42, height: 42, borderRadius: 13, background: `linear-gradient(135deg,${C.green},${C.greenLight})`, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 18, fontWeight: 900, color: "#fff", flexShrink: 0 }}>
+                      {(u.nick || u.name || "?")[0].toUpperCase()}
                     </div>
-                  );
-                })}
-              </div>
-            )}
+                    {/* 정보 */}
+                    <div style={{ flex: 1, minWidth: 0 }}>
+                      <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+                        <span style={{ fontWeight: 700, fontSize: 14, color: C.text }}>{u.name}</span>
+                        {u.nick && <Tag color={C.green}>{u.nick}</Tag>}
+                        {userBkgs > 0 && <Tag color={C.gold} bg={C.gold + "18"}>{userBkgs} booking{userBkgs > 1 ? "s" : ""}</Tag>}
+                      </div>
+                      <div style={{ fontSize: 12, color: C.muted, marginTop: 3 }}>{u.email}</div>
+                      <div style={{ fontSize: 12, color: C.muted, marginTop: 1 }}>
+                        {u.phone && <span>{u.phone}</span>}
+                        {u.address && <span style={{ marginLeft: 8 }}>· {u.address}</span>}
+                      </div>
+                    </div>
+                    {/* 액션 */}
+                    <button onClick={() => doDeleteUser(u.id)} style={{ background: "#fde8e6", border: `1px solid #f5b8b2`, color: C.red, borderRadius: 7, padding: "5px 10px", cursor: "pointer", fontSize: 11, fontWeight: 700, flexShrink: 0 }}>Delete</button>
+                  </div>
+                );
+              })}
+            </div>
           </div>
-        </div>
+        )}
       </div>
     );
   }
