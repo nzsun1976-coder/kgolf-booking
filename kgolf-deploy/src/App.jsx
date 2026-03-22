@@ -7,14 +7,12 @@
  * Session timeout, AuditLog, XSS sanitization, ErrorMask
  */
 
-// Import the functions you need from the SDKs you need
+import { useState, useEffect, useCallback, useRef, memo, useMemo } from "react";
 import { initializeApp } from "firebase/app";
-// TODO: Add SDKs for Firebase products that you want to use
-// https://firebase.google.com/docs/web/setup#available-libraries
+import { getFirestore, doc, setDoc, onSnapshot, getDoc } from "firebase/firestore";
 
-// Your web app's Firebase configuration
 const firebaseConfig = {
-  apiKey: "AIzaSyDBRCKA-yd7oUr19_UiIP6TTlObJ52DQ08",
+  apiKey: "AIzaSyDBRCKA-yd7oUr19_UiIP6TT1ObJ52DQ88",
   authDomain: "kgolf-booking-b909e.firebaseapp.com",
   projectId: "kgolf-booking-b909e",
   storageBucket: "kgolf-booking-b909e.firebasestorage.app",
@@ -22,8 +20,8 @@ const firebaseConfig = {
   appId: "1:165994639150:web:7285f0502f3639185654bf"
 };
 
-// Initialize Firebase
-const app = initializeApp(firebaseConfig);
+const firebaseApp = initializeApp(firebaseConfig);
+const db = getFirestore(firebaseApp);
 // ─── Crypto ───────────────────────────────────────────────
 const PBKDF2_ITER = 100_000;
 async function hashPassword(password, salt) {
