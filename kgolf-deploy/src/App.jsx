@@ -7,10 +7,12 @@
  * Session timeout, AuditLog, XSS sanitization, ErrorMask
  */
 
-import { useState, useEffect, useCallback, useRef } from "react";
+// Import the functions you need from the SDKs you need
 import { initializeApp } from "firebase/app";
-import { getFirestore, doc, setDoc, onSnapshot, getDoc } from "firebase/firestore";
+// TODO: Add SDKs for Firebase products that you want to use
+// https://firebase.google.com/docs/web/setup#available-libraries
 
+// Your web app's Firebase configuration
 const firebaseConfig = {
   apiKey: "AIzaSyDBRCKA-yd7oUr19_UiIP6TTlObJ52DQ08",
   authDomain: "kgolf-booking-b909e.firebaseapp.com",
@@ -20,9 +22,8 @@ const firebaseConfig = {
   appId: "1:165994639150:web:7285f0502f3639185654bf"
 };
 
-const firebaseApp = initializeApp(firebaseConfig);
-const db = getFirestore(firebaseApp);
-
+// Initialize Firebase
+const app = initializeApp(firebaseConfig);
 // ─── Crypto ───────────────────────────────────────────────
 const PBKDF2_ITER = 100_000;
 async function hashPassword(password, salt) {
@@ -387,20 +388,48 @@ function DragGrid({ bookings, ctrDate, onBookSlots, onContextMenu }) {
 // ════════════════════════════════════════════════════════
 //  BOOKING MODAL
 // ════════════════════════════════════════════════════════
-function BookingModal({show,onClose,bay,slots,date,regUsers,onConfirm,busy}) {
-  const [search,setSearch]=useState("");
-  const [selMember,setSelMember]=useState(null);
-  const [walkName,setWalkName]=useState("");
-  const [walkPhone,setWalkPhone]=useState("");
-  const [mode,setMode]=useState("search");
-  useEffect(()=>{if(show){setSearch("");setSelMember(null);setWalkName("");setWalkPhone("");setMode("search");}}},[show]);
-  const filtered=search.length>0?regUsers.filter(u=>sanitize(u.name||"").toLowerCase().includes(search.toLowerCase())||sanitize(u.phone||"").includes(search)||(u.memberNo||"").toLowerCase().includes(search.toLowerCase())).slice(0,8):[];
-  const sorted=slots?[...slots].sort((a,b)=>slotIdx(a)-slotIdx(b)):[];
-  const handleConfirm=()=>{
+// React.memo → 부모 재렌더링 시 불필요한 재렌더 방지
+const BookingModal = memo(function BookingModal({show,onClose,bay,slots,date,regUsers,onConfirm,busy}) {
+  const [search,setSearch]       = useState("");
+  const [selMember,setSelMember] = useState(null);
+  const [walkName,setWalkName]   = useState("");
+  const [walkPhone,setWalkPhone] = useState("");
+  const [mode,setMode]           = useState("search");
+  const searchInputRef           = useRef(null);  // autoFocus 대신 ref 사용
+
+  // 모달이 열릴 때만 초기화 + 포커스 (타이핑 중엔 절대 실행 안됨)
+  useEffect(()=>{
+    if(show){
+      setSearch(""); setSelMember(null); setWalkName(""); setWalkPhone(""); setMode("search");
+      // 짧은 딜레이 후 포커스 — 모달 애니메이션 완료 후
+      const t = setTimeout(()=>{ searchInputRef.current?.focus(); }, 120);
+      return ()=>clearTimeout(t);
+    }
+  },[show]);
+
+  // useMemo → search/regUsers가 바뀔 때만 재계산
+  const filtered = useMemo(()=>
+    search.length>0
+      ? regUsers.filter(u=>
+          sanitize(u.name||"").toLowerCase().includes(search.toLowerCase()) ||
+          sanitize(u.phone||"").includes(search) ||
+          (u.memberNo||"").toLowerCase().includes(search.toLowerCase())
+        ).slice(0,8)
+      : []
+  ,[search, regUsers]);
+
+  const sorted = useMemo(()=>
+    slots ? [...slots].sort((a,b)=>slotIdx(a)-slotIdx(b)) : []
+  ,[slots]);
+
+  const handleConfirm = useCallback(()=>{
     if(mode==="search"&&!selMember) return;
-    const info=selMember?{userId:selMember.id,userName:selMember.name,userNick:selMember.nick||"",userPhone:selMember.phone||"-",userEmail:selMember.email||""}:{userId:"walkin_"+Date.now(),userName:sanitize(walkName,80),userNick:"",userPhone:sanitize(walkPhone,30)||"-",userEmail:""};
+    const info = selMember
+      ? {userId:selMember.id,userName:selMember.name,userNick:selMember.nick||"",userPhone:selMember.phone||"-",userEmail:selMember.email||""}
+      : {userId:"walkin_"+Date.now(),userName:sanitize(walkName,80),userNick:"",userPhone:sanitize(walkPhone,30)||"-",userEmail:""};
     onConfirm(bay,sorted,info);
-  };
+  },[mode,selMember,walkName,walkPhone,onConfirm,bay,sorted]);
+
   return (
     <Modal show={show} onClose={onClose} title="New Booking" wide>
       {/* Time summary */}
@@ -422,30 +451,38 @@ function BookingModal({show,onClose,bay,slots,date,regUsers,onConfirm,busy}) {
       {mode==="search"&&(
         <div>
           <div style={{position:"relative",marginBottom:12}}>
-            <input value={search} onChange={e=>setSearch(sanitize(e.target.value,80))} placeholder="Name, phone or member number…" autoFocus
+            {/* autoFocus 제거 — ref로 직접 포커스 관리 */}
+            <input
+              ref={searchInputRef}
+              value={search}
+              onChange={e=>setSearch(sanitize(e.target.value,80))}
+              placeholder="Name, phone or member number…"
               style={{width:"100%",padding:"11px 14px 11px 40px",background:C.surface2,border:`1px solid ${C.border}`,borderRadius:10,color:C.white,fontSize:14,outline:"none",boxSizing:"border-box",fontFamily:"inherit"}}/>
             <div style={{position:"absolute",left:14,top:"50%",transform:"translateY(-50%)",color:C.textMute,fontSize:14}}>🔍</div>
           </div>
-          {filtered.length>0&&(
-            <div style={{background:C.surface2,borderRadius:10,border:`1px solid ${C.border}`,overflow:"hidden",marginBottom:12}}>
-              {filtered.map((u,idx)=>(
-                <div key={u.id} onClick={()=>setSelMember(selMember?.id===u.id?null:u)}
-                  style={{display:"flex",alignItems:"center",gap:12,padding:"11px 14px",borderBottom:idx<filtered.length-1?`1px solid ${C.border}`:"none",cursor:"pointer",background:selMember?.id===u.id?C.limeDim:"transparent",transition:"background .15s"}}>
-                  <div style={{width:36,height:36,borderRadius:10,background:selMember?.id===u.id?C.lime:C.card,display:"flex",alignItems:"center",justifyContent:"center",fontSize:15,fontWeight:900,color:selMember?.id===u.id?"#030803":C.lime,flexShrink:0,border:`1px solid ${selMember?.id===u.id?C.lime:C.border}`}}>
-                    {(u.nick||u.name||"?")[0].toUpperCase()}
+          {/* 결과 영역 — min-height로 레이아웃 점프 방지 */}
+          <div style={{minHeight:40}}>
+            {filtered.length>0&&(
+              <div style={{background:C.surface2,borderRadius:10,border:`1px solid ${C.border}`,overflow:"hidden",marginBottom:12}}>
+                {filtered.map((u,idx)=>(
+                  <div key={u.id} onClick={()=>setSelMember(selMember?.id===u.id?null:u)}
+                    style={{display:"flex",alignItems:"center",gap:12,padding:"11px 14px",borderBottom:idx<filtered.length-1?`1px solid ${C.border}`:"none",cursor:"pointer",background:selMember?.id===u.id?C.limeDim:"transparent",transition:"background .15s"}}>
+                    <div style={{width:36,height:36,borderRadius:10,background:selMember?.id===u.id?C.lime:C.card,display:"flex",alignItems:"center",justifyContent:"center",fontSize:15,fontWeight:900,color:selMember?.id===u.id?"#030803":C.lime,flexShrink:0,border:`1px solid ${selMember?.id===u.id?C.lime:C.border}`}}>
+                      {(u.nick||u.name||"?")[0].toUpperCase()}
+                    </div>
+                    <div style={{flex:1}}>
+                      <div style={{display:"flex",alignItems:"center",gap:6}}><span style={{fontWeight:700,fontSize:13,color:C.white}}>{sanitize(u.name)}</span>{u.memberNo&&<Tag color={C.blue}>{u.memberNo}</Tag>}</div>
+                      <div style={{fontSize:11,color:C.textMute,marginTop:2}}>{u.phone||"—"}</div>
+                    </div>
+                    {selMember?.id===u.id&&<div style={{color:C.lime,fontSize:18}}>✓</div>}
                   </div>
-                  <div style={{flex:1}}>
-                    <div style={{display:"flex",alignItems:"center",gap:6}}><span style={{fontWeight:700,fontSize:13,color:C.white}}>{sanitize(u.name)}</span>{u.memberNo&&<Tag color={C.blue}>{u.memberNo}</Tag>}</div>
-                    <div style={{fontSize:11,color:C.textMute,marginTop:2}}>{u.phone||"—"}</div>
-                  </div>
-                  {selMember?.id===u.id&&<div style={{color:C.lime,fontSize:18}}>✓</div>}
-                </div>
-              ))}
-            </div>
-          )}
-          {search.length>0&&filtered.length===0&&<div style={{padding:"18px",textAlign:"center",color:C.textMute,fontSize:13,background:C.surface2,borderRadius:10,marginBottom:12}}>No member found — try Walk-in mode</div>}
+                ))}
+              </div>
+            )}
+            {search.length>0&&filtered.length===0&&<div style={{padding:"18px",textAlign:"center",color:C.textMute,fontSize:13,background:C.surface2,borderRadius:10,marginBottom:12}}>No member found — try Walk-in mode</div>}
+          </div>
           {selMember&&(
-            <div style={{background:C.limeDim,borderRadius:10,padding:14,border:`1px solid ${C.borderMd}`,marginBottom:16}}>
+            <div style={{background:C.limeDim,borderRadius:10,padding:14,border:`1px solid ${C.borderMd}`,marginBottom:16,marginTop:4}}>
               <div style={{fontSize:9,color:C.lime,fontWeight:700,textTransform:"uppercase",letterSpacing:"0.12em",marginBottom:6}}>✓ Selected</div>
               <div style={{fontSize:17,fontWeight:800,color:C.white}}>{sanitize(selMember.name)}</div>
               {selMember.memberNo&&<div style={{fontSize:11,color:C.blue,fontWeight:700,marginTop:2}}>{selMember.memberNo}</div>}
@@ -456,6 +493,7 @@ function BookingModal({show,onClose,bay,slots,date,regUsers,onConfirm,busy}) {
       )}
       {mode==="walkin"&&(
         <div>
+          {/* Walk-in 모드 — 이름 필드에만 포커스 */}
           <Inp req label="Customer Name" value={walkName} onChange={setWalkName} placeholder="John Smith" maxLen={80} autoFocus/>
           <Inp label="Phone Number" value={walkPhone} onChange={setWalkPhone} placeholder="+64 21 xxx xxxx" maxLen={30}/>
         </div>
@@ -466,7 +504,7 @@ function BookingModal({show,onClose,bay,slots,date,regUsers,onConfirm,busy}) {
       </div>
     </Modal>
   );
-}
+});
 
 // ════════════════════════════════════════════════════════
 //  CONTEXT MENU
