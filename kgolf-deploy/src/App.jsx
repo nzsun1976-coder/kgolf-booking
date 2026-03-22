@@ -393,7 +393,7 @@ function BookingModal({show,onClose,bay,slots,date,regUsers,onConfirm,busy}) {
   const [walkName,setWalkName]=useState("");
   const [walkPhone,setWalkPhone]=useState("");
   const [mode,setMode]=useState("search");
-  useEffect(()=>{if(show){setSearch("");setSelMember(null);setWalkName("");setWalkPhone("");setMode("search");}});
+  useEffect(()=>{if(show){setSearch("");setSelMember(null);setWalkName("");setWalkPhone("");setMode("search");}},[show]);
   const filtered=search.length>0?regUsers.filter(u=>sanitize(u.name||"").toLowerCase().includes(search.toLowerCase())||sanitize(u.phone||"").includes(search)||(u.memberNo||"").toLowerCase().includes(search.toLowerCase())).slice(0,8):[];
   const sorted=slots?[...slots].sort((a,b)=>slotIdx(a)-slotIdx(b)):[];
   const handleConfirm=()=>{
@@ -526,7 +526,7 @@ function ChangeTimeModal({show,onClose,booking,onConfirm,busy}) {
   const [newDate,setNewDate]=useState(booking?.date||DATES[0]);
   const [newSlot,setNewSlot]=useState(booking?.slots?.[0]||SLOTS[0]);
   const [dur,setDur]=useState(booking?.slots?.length||1);
-  useEffect(()=>{if(show&&booking){setNewDate(booking.date);setNewSlot(booking.slots?.[0]||SLOTS[0]);setDur(booking.slots?.length||1);}});
+  useEffect(()=>{if(show&&booking){setNewDate(booking.date);setNewSlot(booking.slots?.[0]||SLOTS[0]);setDur(booking.slots?.length||1);}},[show,booking]);
   const newSlots=SLOTS.slice(slotIdx(newSlot),slotIdx(newSlot)+dur);
   return (
     <Modal show={show} onClose={onClose} title="Change Date / Time">
