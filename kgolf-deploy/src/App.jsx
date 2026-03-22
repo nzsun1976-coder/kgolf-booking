@@ -393,7 +393,7 @@ function BookingModal({show,onClose,bay,slots,date,regUsers,onConfirm,busy}) {
   const [walkName,setWalkName]=useState("");
   const [walkPhone,setWalkPhone]=useState("");
   const [mode,setMode]=useState("search");
-  useEffect(()=>{if(show){setSearch("");setSelMember(null);setWalkName("");setWalkPhone("");setMode("search");}},[show]);
+  useEffect(()=>{if(show){setSearch("");setSelMember(null);setWalkName("");setWalkPhone("");setMode("search");}}},[show]);
   const filtered=search.length>0?regUsers.filter(u=>sanitize(u.name||"").toLowerCase().includes(search.toLowerCase())||sanitize(u.phone||"").includes(search)||(u.memberNo||"").toLowerCase().includes(search.toLowerCase())).slice(0,8):[];
   const sorted=slots?[...slots].sort((a,b)=>slotIdx(a)-slotIdx(b)):[];
   const handleConfirm=()=>{
