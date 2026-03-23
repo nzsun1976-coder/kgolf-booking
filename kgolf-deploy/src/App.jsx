@@ -263,9 +263,10 @@ const CSS = `
   input,select,button,textarea{font-family:inherit;}
   input::placeholder{color:${C.textMute};}
   select option{background:#1a2a1c;color:${C.white};}
-  ::-webkit-scrollbar{width:4px;height:4px;}
-  ::-webkit-scrollbar-track{background:${C.surface};}
-  ::-webkit-scrollbar-thumb{background:${C.border};border-radius:2px;}
+  ::-webkit-scrollbar{width:6px;height:10px;}
+  ::-webkit-scrollbar-track{background:${C.surface};border-radius:6px;}
+  ::-webkit-scrollbar-thumb{background:${C.borderMd};border-radius:6px;min-width:40px;}
+  ::-webkit-scrollbar-thumb:hover{background:${C.lime};}
   @keyframes toastIn{from{opacity:0;transform:translateX(-50%) translateY(-16px) scale(.9);}to{opacity:1;transform:translateX(-50%) translateY(0) scale(1);}}
   @keyframes fadeUp{from{opacity:0;transform:translateY(16px);}to{opacity:1;transform:translateY(0);}}
   @keyframes fadeIn{from{opacity:0;}to{opacity:1;}}
