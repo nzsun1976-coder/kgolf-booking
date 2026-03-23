@@ -218,6 +218,50 @@ const ADMIN_DATES = Array.from({length:61},(_,i)=>{ const d=new Date(); d.setDat
 const SESSION_MS= 30*60*1000;
 const genMemberNo = (users) => `KG-${String(users.length+1).padStart(4,"0")}`;
 
+// ─── Loyalty System ────────────────────────────────────
+// 포인트 규칙
+const PTS = {
+  BOOKING:       10,  // 예약 생성
+  ATTEND:        10,  // 출석 확인
+  CANCEL_EARLY:   0,  // 5시간 이전 취소 (패널티 없음)
+  CANCEL_LATE:   -5,  // 5시간 이내 취소
+  NOSHOW:       -15,  // 노쇼
+};
+// 등급 정의
+const TIERS = [
+  { id:"bronze", label:"Bronze", icon:"🥉", minPts:0,   minVisits:0,  color:"#cd7f32", desc:"Welcome to KGOLF!" },
+  { id:"silver", label:"Silver", icon:"🥈", minPts:50,  minVisits:10, color:"#aaaaaa", desc:"Priority booking 1 day early" },
+  { id:"gold",   label:"Gold",   icon:"🥇", minPts:150, minVisits:30, color:"#f0c040", desc:"Priority 2 days early + monthly free 30min" },
+];
+const getTier = (u) => {
+  const pts     = u?.points    || 0;
+  const visits  = u?.visits    || 0;
+  const noShows = u?.noShows   || 0;
+  // 노쇼 3회 이상이면 강등 가능
+  const eligible = [...TIERS].reverse().find(t=>pts>=t.minPts && visits>=t.minVisits);
+  return eligible || TIERS[0];
+};
+const getNextTier = (u) => {
+  const cur = getTier(u);
+  const idx  = TIERS.findIndex(t=>t.id===cur.id);
+  return idx < TIERS.length-1 ? TIERS[idx+1] : null;
+};
+const tierProgress = (u) => {
+  const cur  = getTier(u);
+  const next = getNextTier(u);
+  if(!next) return 100;
+  const pts = u?.points || 0;
+  return Math.min(100, Math.round(((pts - cur.minPts) / (next.minPts - cur.minPts)) * 100));
+};
+// 취소가 늦은 취소인지 확인 (시작 5시간 이내)
+const isLateCancellation = (bkg) => {
+  if(!bkg?.slots?.[0] || !bkg?.date) return false;
+  const startStr = bkg.date + "T" + bkg.slots[0] + ":00";
+  const start = new Date(startStr);
+  const now   = new Date();
+  return (start - now) < 5 * 60 * 60 * 1000;
+};
+
 // ════════════════════════════════════════════════════════
 //  KGOLF.ai DARK PREMIUM PALETTE
 // ════════════════════════════════════════════════════════
@@ -814,7 +858,8 @@ export default function KGolfApp() {
   const [userSearch,setUserSearch]   = useState("");
   const [statsFilter,setStatsFilter] = useState(null);
   const [editMemberNo,setEditMemberNo]=useState(null);
-  const [editMember,setEditMember]   = useState(null); // 전체 프로필 편집
+  const [editMember,setEditMember]   = useState(null);
+  const [cancelConfirm,setCancelConfirm] = useState(null); // {bkg} 취소 확인 모달
 
   const [lf,setLf] = useState({email:"",pass:""});
   const [rf,setRf] = useState({name:"",nick:"",email:"",phone:"",address:"",pass:"",passConfirm:""});
@@ -948,27 +993,102 @@ export default function KGolfApp() {
     try{
       const bkg={id:Date.now().toString(),userId:user.id,userName:sanitize(user.name),userNick:sanitize(user.nick||""),userPhone:sanitize(user.phone||""),userEmail:sanitizeEmail(user.email),bay:selBay,date:selDate,slots:sorted,status:"confirmed",createdAt:new Date().toISOString(),adminCreated:false,bookMode,numPlayers:bookMode==="game"?numPlayers:undefined,numHoles:bookMode==="game"?numHoles:undefined};
       await saveBkgs([...bookings,bkg]);
-      await auditLog("BOOKING_CREATED",{userId:user.id,bay:selBay,date:selDate});
-      // 확인 이메일 발송 (비동기 — 실패해도 예약은 유지)
+      // 포인트: 예약 생성 +10 (출석 확인 시 추가 +10)
+      const updatedUser = {...user, points:(user.points||0)+PTS.BOOKING, visits:(user.visits||0)+1};
+      await saveUsrs(regUsers.map(u=>u.id===user.id?updatedUser:u));
+      setUser(updatedUser);
+      await auditLog("BOOKING_CREATED",{userId:user.id,bay:selBay,date:selDate,pts:PTS.BOOKING});
       sendConfirmationEmail(bkg, regUsers).catch(e=>console.error("[email]",e));
       setLastBkg(bkg);setNewBkg(true);setTabView("confirmed");
-      pop(`Bay ${selBay} booked — ${totalDur(sorted)}`);
+      pop(`Bay ${selBay} booked — ${totalDur(sorted)} · +${PTS.BOOKING}pts`);
     }catch(e){console.error(e);pop(genericErr(),"err");}
     finally{setBusy(false);}
   };
 
+  // 유저용 취소 — 포인트 차감 + 경고 누적
   const doCancel=async(id)=>{
     setBusy(true);
     try{
       const bkg = bookings.find(b=>b.id===id);
-      const updated = bookings.map(b=>b.id===id?{...b,status:"cancelled"}:b);
-      await saveBkgs(updated);
-      await auditLog("BOOKING_CANCELLED",{id,by:user?.email||"admin"});
-      // 취소 확인 이메일 발송
-      if(bkg?.userEmail){
+      const late = isLateCancellation(bkg);
+      const pts  = late ? PTS.CANCEL_LATE : PTS.CANCEL_EARLY;
+      // 예약 취소
+      await saveBkgs(bookings.map(b=>b.id===id?{...b,status:"cancelled"}:b));
+      // 포인트 + 경고 업데이트 (유저 예약만)
+      if(bkg?.userId===user?.id){
+        const warnings = late ? (user.warnings||0)+1 : (user.warnings||0);
+        const suspended = warnings>=3;
+        const updatedUser = {...user,
+          points:   Math.max(0,(user.points||0)+pts),
+          warnings, suspended,
+          lateCancels: late ? (user.lateCancels||0)+1 : (user.lateCancels||0),
+        };
+        await saveUsrs(regUsers.map(u=>u.id===user.id?updatedUser:u));
+        setUser(updatedUser);
+        if(suspended) pop("Your account has been suspended due to repeated late cancellations.
+Please contact us.","err");
+        else if(warnings>=2) pop(`Booking cancelled. ⚠️ Warning ${warnings}/3 — one more will suspend your account.`,"err");
+        else if(late) pop(`Booking cancelled. Late cancellation: ${pts}pts penalty.`,"err");
+        else pop("Booking cancelled. No penalty applied. ✅");
+      } else {
+        pop("Booking cancelled.");
+      }
+      await auditLog("BOOKING_CANCELLED",{id,by:user?.email||"admin",late,pts});
+      if(bkg?.userEmail||bkg?.userId){
         sendCancellationEmail(bkg, regUsers).catch(e=>console.error("[email]",e));
       }
-      pop("Booking cancelled.");
+      setCancelConfirm(null);
+    }catch(e){console.error(e);pop(genericErr(),"err");}
+    finally{setBusy(false);}
+  };
+
+  // 어드민용 노쇼 처리
+  const doMarkNoShow=async(bkg)=>{
+    if(!bkg) return;
+    setBusy(true);
+    try{
+      await saveBkgs(bookings.map(b=>b.id===bkg.id?{...b,status:"noshow"}:b));
+      const target = regUsers.find(u=>u.id===bkg.userId);
+      if(target){
+        const warnings = (target.warnings||0)+1;
+        const suspended = warnings>=3;
+        await saveUsrs(regUsers.map(u=>u.id===target.id?{...u,
+          points:   Math.max(0,(u.points||0)+PTS.NOSHOW),
+          noShows:  (u.noShows||0)+1,
+          warnings, suspended,
+        }:u));
+      }
+      await auditLog("NOSHOW",{bkgId:bkg.id,userId:bkg.userId});
+      pop(`No-show recorded for ${sanitize(bkg.userName)}. ${PTS.NOSHOW}pts penalty applied.`);
+    }catch(e){console.error(e);pop(genericErr(),"err");}
+    finally{setBusy(false);}
+  };
+
+  // 어드민용 출석 확인
+  const doMarkAttend=async(bkg)=>{
+    if(!bkg) return;
+    setBusy(true);
+    try{
+      await saveBkgs(bookings.map(b=>b.id===bkg.id?{...b,status:"attended"}:b));
+      const target = regUsers.find(u=>u.id===bkg.userId);
+      if(target){
+        await saveUsrs(regUsers.map(u=>u.id===target.id?{...u,
+          points: (u.points||0)+PTS.ATTEND,
+        }:u));
+      }
+      await auditLog("ATTENDED",{bkgId:bkg.id,userId:bkg.userId});
+      pop(`Attendance confirmed for ${sanitize(bkg.userName)}. +${PTS.ATTEND}pts`);
+    }catch(e){console.error(e);pop(genericErr(),"err");}
+    finally{setBusy(false);}
+  };
+
+  // 어드민용 경고/정지 초기화
+  const doResetWarnings=async(userId)=>{
+    setBusy(true);
+    try{
+      await saveUsrs(regUsers.map(u=>u.id===userId?{...u,warnings:0,suspended:false}:u));
+      await auditLog("WARNINGS_RESET",{userId,by:"admin"});
+      pop("Warnings cleared. Account restored.");
     }catch(e){console.error(e);pop(genericErr(),"err");}
     finally{setBusy(false);}
   };
@@ -1157,15 +1277,40 @@ export default function KGolfApp() {
         <style>{CSS}</style><Toast toast={toast}/>
         <Header subtitle="Book a bay"/>
         <div style={{maxWidth:500,margin:"0 auto",padding:"20px 16px 0",animation:"fadeUp .35s ease"}}>
-          {/* Greeting */}
-          <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:24,padding:"16px 18px",background:C.surface,borderRadius:14,border:`1px solid ${C.border}`}}>
-            <div>
-              <div style={{fontSize:11,color:C.textMute,fontWeight:600,letterSpacing:"0.08em",textTransform:"uppercase"}}>Welcome back</div>
-              <div style={{fontSize:20,fontWeight:800,color:C.white,marginTop:3,letterSpacing:"-0.01em"}}>{sanitize(user?.nick||user?.name||"")}</div>
-              {user?.memberNo&&<div style={{fontSize:11,color:C.lime,fontWeight:600,marginTop:2}}>{user.memberNo}</div>}
-            </div>
-            <div style={{width:46,height:46,borderRadius:12,background:C.limeDim,border:`1px solid ${C.borderMd}`,display:"flex",alignItems:"center",justifyContent:"center",fontSize:22}}>⛳</div>
-          </div>
+          {/* Greeting + Loyalty */}
+          {(()=>{
+            const tier=getTier(user), next=getNextTier(user), prog=tierProgress(user);
+            return (
+              <div style={{marginBottom:24,background:C.surface,borderRadius:14,border:`1px solid ${user?.suspended?C.red:C.border}`,overflow:"hidden"}}>
+                {/* 정지 배너 */}
+                {user?.suspended&&<div style={{background:C.red,padding:"8px 18px",fontSize:12,fontWeight:700,color:C.white,textAlign:"center"}}>⛔ Account Suspended — Contact us to restore access</div>}
+                <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",padding:"16px 18px"}}>
+                  <div>
+                    <div style={{fontSize:11,color:C.textMute,fontWeight:600,letterSpacing:"0.08em",textTransform:"uppercase"}}>Welcome back</div>
+                    <div style={{fontSize:20,fontWeight:800,color:C.white,marginTop:3,letterSpacing:"-0.01em"}}>{sanitize(user?.nick||user?.name||"")}</div>
+                    <div style={{display:"flex",alignItems:"center",gap:8,marginTop:6,flexWrap:"wrap"}}>
+                      {user?.memberNo&&<span style={{fontSize:11,color:C.lime,fontWeight:700}}>{user.memberNo}</span>}
+                      <span style={{fontSize:12,fontWeight:800}}>{tier.icon} <span style={{color:tier.color}}>{tier.label}</span></span>
+                      <span style={{fontSize:11,color:C.gold,fontWeight:700}}>{user?.points||0} pts</span>
+                      {(user?.warnings||0)>0&&<span style={{fontSize:10,background:C.redDim,color:C.red,border:`1px solid ${C.red}44`,borderRadius:8,padding:"2px 8px",fontWeight:700}}>⚠️ {user.warnings}/3 warnings</span>}
+                    </div>
+                  </div>
+                  <div style={{fontSize:32}}>{tier.icon}</div>
+                </div>
+                {/* 등급 진행도 */}
+                {next&&(
+                  <div style={{padding:"0 18px 14px"}}>
+                    <div style={{display:"flex",justifyContent:"space-between",fontSize:9,color:C.textMute,marginBottom:5,fontWeight:700,textTransform:"uppercase",letterSpacing:"0.08em"}}>
+                      <span>{tier.label}</span><span style={{color:next.color}}>{next.icon} {next.label} — {next.minPts - (user?.points||0)} pts away</span>
+                    </div>
+                    <div style={{height:4,background:C.border,borderRadius:2,overflow:"hidden"}}>
+                      <div style={{width:`${prog}%`,height:"100%",background:next.color,borderRadius:2,transition:"width .4s",boxShadow:`0 0 8px ${next.color}80`}}/>
+                    </div>
+                  </div>
+                )}
+              </div>
+            );
+          })()}
 
           {/* Date selector */}
           <SectionLabel>Select Date</SectionLabel>
@@ -1203,7 +1348,7 @@ export default function KGolfApp() {
               const free=bayFreeSlots(selDate,bay),pct=((SLOTS.length-free)/SLOTS.length)*100,full=free===0;
               const barCol=pct>75?C.red:pct>40?C.gold:C.lime;
               return (
-                <button key={bay} className="bay-btn" onClick={()=>{if(!full){setSelBay(bay);setSelSlots([]);resetMode();setTabView("selectMode");}}} disabled={full}
+                <button key={bay} className="bay-btn" onClick={()=>{if(user?.suspended){pop("Your account is currently suspended.\nPlease contact us to restore access.","err");return;}if(!full){setSelBay(bay);setSelSlots([]);resetMode();setTabView("selectMode");}}} disabled={full}
                   style={{background:C.card,border:`1px solid ${C.border}`,borderRadius:14,padding:"18px 10px",cursor:full?"not-allowed":"pointer",textAlign:"center",transition:"all .2s",opacity:full?.4:1,boxShadow:C.shadowSm}}>
                   <div style={{fontSize:8,color:C.textMute,marginBottom:4,letterSpacing:"0.15em",textTransform:"uppercase",fontWeight:700}}>BAY</div>
                   <div style={{fontSize:32,fontWeight:900,color:C.lime,lineHeight:1,letterSpacing:"-0.02em"}}>{bay}</div>
@@ -1482,6 +1627,44 @@ export default function KGolfApp() {
       return (
         <div style={{minHeight:"100vh",background:C.bg}}>
           <style>{CSS}</style><Toast toast={toast}/>
+          {/* 취소 확인 모달 */}
+          {cancelConfirm&&(()=>{
+            const late=isLateCancellation(cancelConfirm);
+            const pts=late?PTS.CANCEL_LATE:PTS.CANCEL_EARLY;
+            const curPts=user?.points||0;
+            return (
+              <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,.8)",zIndex:8500,display:"flex",alignItems:"center",justifyContent:"center",padding:16,backdropFilter:"blur(4px)"}}>
+                <div style={{background:C.surface,borderRadius:16,padding:24,width:"100%",maxWidth:400,border:`1px solid ${late?C.red:C.border}`,boxShadow:C.shadowLg,animation:"fadeUp .3s ease"}}>
+                  <div style={{fontSize:18,fontWeight:800,color:C.white,marginBottom:16}}>Cancel Booking?</div>
+                  {/* 예약 정보 */}
+                  <div style={{background:C.surface2,borderRadius:10,padding:"12px 16px",marginBottom:16,border:`1px solid ${C.border}`}}>
+                    <div style={{fontSize:13,fontWeight:700,color:C.white}}>Bay {cancelConfirm.bay} · {fmtDate(cancelConfirm.date)}</div>
+                    <div style={{fontSize:12,color:C.textMute,marginTop:3}}>{cancelConfirm.slots?.[0]} – {cancelConfirm.slots?.length>0?slotEnd(cancelConfirm.slots[cancelConfirm.slots.length-1]):"?"}</div>
+                  </div>
+                  {/* 포인트 영향 */}
+                  <div style={{background:late?C.redDim:C.limeDim,borderRadius:10,padding:"12px 16px",marginBottom:20,border:`1px solid ${late?C.red+"44":C.borderMd}`}}>
+                    {late?(
+                      <>
+                        <div style={{fontSize:12,fontWeight:800,color:C.red,marginBottom:6}}>⚠️ Late Cancellation Penalty</div>
+                        <div style={{fontSize:13,color:C.white}}>Points: <strong>{curPts} → {Math.max(0,curPts+pts)}</strong> <span style={{color:C.red}}>({pts}pts)</span></div>
+                        <div style={{fontSize:11,color:C.textMute,marginTop:4}}>Cancellations within 5 hours of start time incur a {Math.abs(pts)}pt penalty.</div>
+                        {(user?.warnings||0)>=2&&<div style={{fontSize:11,color:C.red,marginTop:6,fontWeight:700}}>⛔ One more warning will suspend your account!</div>}
+                      </>
+                    ):(
+                      <>
+                        <div style={{fontSize:12,fontWeight:800,color:C.lime,marginBottom:6}}>✅ No Penalty</div>
+                        <div style={{fontSize:13,color:C.white}}>Cancelled more than 5 hours in advance — no points deducted.</div>
+                      </>
+                    )}
+                  </div>
+                  <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10}}>
+                    <Btn full v="dark" onClick={()=>setCancelConfirm(null)}>Keep Booking</Btn>
+                    <Btn full v="danger" onClick={()=>doCancel(cancelConfirm.id)} disabled={busy}>{busy?"Cancelling…":"Confirm Cancel"}</Btn>
+                  </div>
+                </div>
+              </div>
+            );
+          })()}
           {/* 유저용 날짜/시간 변경 모달 */}
           <ChangeTimeModal show={changeModal.show} onClose={()=>setChangeModal({show:false,booking:null})} booking={changeModal.booking} onConfirm={doChangeTime} busy={busy}/>
           <Header subtitle="Your reservations"/>
@@ -1515,7 +1698,7 @@ export default function KGolfApp() {
                         <div style={{fontSize:10,color:C.textMute,fontFamily:"monospace"}}>#{b.id?.slice(-8).toUpperCase()}</div>
                         <div style={{display:"flex",gap:8}}>
                           <Btn v="ghost" sz="sm" onClick={()=>setChangeModal({show:true,booking:b})} disabled={busy}>🕐 Change</Btn>
-                          <Btn v="danger" sz="sm" onClick={()=>doCancel(b.id)} disabled={busy}>Cancel</Btn>
+                          <Btn v="danger" sz="sm" onClick={()=>setCancelConfirm(b)} disabled={busy}>Cancel</Btn>
                         </div>
                       </div>
                     </div>
@@ -1555,6 +1738,57 @@ export default function KGolfApp() {
               <div style={{fontSize:11,color:C.textMute,marginTop:3}}>{myBkgs.filter(b=>b.status==="confirmed").length} active booking{myBkgs.filter(b=>b.status==="confirmed").length!==1?"s":""}</div>
             </div>
           </div>
+          {/* 로열티 카드 */}
+          {(()=>{
+            const tier=getTier(user),next=getNextTier(user),prog=tierProgress(user);
+            return (
+              <Card style={{marginBottom:14}} glow>
+                <SectionLabel>Membership Status</SectionLabel>
+                <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:14}}>
+                  <div>
+                    <div style={{fontSize:28,fontWeight:900}}>{tier.icon} <span style={{color:tier.color}}>{tier.label}</span></div>
+                    <div style={{fontSize:11,color:C.textMute,marginTop:4}}>{tier.desc}</div>
+                  </div>
+                  <div style={{textAlign:"right"}}>
+                    <div style={{fontSize:28,fontWeight:900,color:C.gold}}>{user?.points||0}</div>
+                    <div style={{fontSize:10,color:C.textMute,fontWeight:700,textTransform:"uppercase"}}>Points</div>
+                  </div>
+                </div>
+                {/* 진행도 */}
+                {next&&<>
+                  <div style={{display:"flex",justifyContent:"space-between",fontSize:10,color:C.textMute,marginBottom:5,fontWeight:700}}>
+                    <span>Progress to {next.icon} {next.label}</span>
+                    <span style={{color:next.color}}>{prog}%</span>
+                  </div>
+                  <div style={{height:6,background:C.border,borderRadius:3,overflow:"hidden",marginBottom:14}}>
+                    <div style={{width:`${prog}%`,height:"100%",background:next.color,borderRadius:3,transition:"width .4s",boxShadow:`0 0 8px ${next.color}80`}}/>
+                  </div>
+                </>}
+                {/* 스탯 */}
+                <div style={{display:"grid",gridTemplateColumns:"repeat(3,1fr)",gap:8,marginBottom:14}}>
+                  {[["Visits",user?.visits||0,C.lime],["Warnings",(user?.warnings||0)+"/3",(user?.warnings||0)>0?C.red:C.textMute],["No-shows",user?.noShows||0,(user?.noShows||0)>0?C.red:C.textMute]].map(([l,v,col])=>(
+                    <div key={l} style={{background:C.surface2,borderRadius:10,padding:"10px 8px",textAlign:"center",border:`1px solid ${C.border}`}}>
+                      <div style={{fontSize:20,fontWeight:900,color:col}}>{v}</div>
+                      <div style={{fontSize:9,color:C.textMute,marginTop:3,fontWeight:700,textTransform:"uppercase",letterSpacing:"0.06em"}}>{l}</div>
+                    </div>
+                  ))}
+                </div>
+                {/* 등급별 혜택 안내 */}
+                <div style={{background:C.surface2,borderRadius:10,padding:"12px 14px",border:`1px solid ${C.border}`}}>
+                  <div style={{fontSize:10,fontWeight:700,color:C.textSub,textTransform:"uppercase",letterSpacing:"0.1em",marginBottom:8}}>Tier Benefits</div>
+                  {TIERS.map(t=>(
+                    <div key={t.id} style={{display:"flex",alignItems:"center",gap:8,marginBottom:6,opacity:tier.id===t.id?1:0.4}}>
+                      <span style={{fontSize:14}}>{t.icon}</span>
+                      <span style={{fontSize:11,fontWeight:tier.id===t.id?700:400,color:tier.id===t.id?t.color:C.textMute}}>{t.label}</span>
+                      <span style={{fontSize:10,color:C.textMute,flex:1,textAlign:"right"}}>{t.desc}</span>
+                      {tier.id===t.id&&<span style={{fontSize:9,background:t.color+"22",color:t.color,border:`1px solid ${t.color}44`,borderRadius:8,padding:"1px 6px",fontWeight:700}}>YOU</span>}
+                    </div>
+                  ))}
+                </div>
+                {user?.suspended&&<div style={{marginTop:12,background:C.redDim,borderRadius:10,padding:"10px 14px",border:`1px solid ${C.red}44`,fontSize:12,color:C.red,fontWeight:700,textAlign:"center"}}>⛔ Account Suspended — Contact admin@kgolf.co.nz</div>}
+              </Card>
+            );
+          })()}
           <Card style={{marginBottom:16}}>
             <SectionLabel>Account Info</SectionLabel>
             {[["Email",user?.email],["Phone",user?.phone||"—"],["Address",user?.address||"—"]].map(([k,v])=>(
@@ -1686,12 +1920,19 @@ export default function KGolfApp() {
                   const s=b.slots?[...b.slots].sort((a,c)=>slotIdx(a)-slotIdx(c)):[];
                   return <div key={b.id} onContextMenu={e=>{e.preventDefault();setCtxMenu({x:e.clientX,y:e.clientY,booking:b,bay:b.bay});}} style={{padding:"12px 14px",background:C.surface2,borderRadius:10,border:`1px solid ${b.adminCreated?C.lime+"33":"#4da8ff33"}`,cursor:"context-menu"}}>
                     <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start"}}>
-                      <div>
+                      <div style={{flex:1}}>
                         <div style={{fontSize:12,fontWeight:800,color:b.adminCreated?C.lime:"#4da8ff"}}>Bay {b.bay} · {s[0]}–{s.length>0?slotEnd(s[s.length-1]):"?"}</div>
                         <div style={{fontSize:13,fontWeight:700,color:C.white,marginTop:3}}>{sanitize(b.userName)}</div>
-                        <div style={{fontSize:10,color:C.textMute,marginTop:2}}>{totalDur(b.slots||[])} {b.userPhone!=="-"?`· ${b.userPhone}`:""}</div>
+                        <div style={{fontSize:10,color:C.textMute,marginTop:2}}>{totalDur(b.slots||[])} {b.userPhone&&b.userPhone!=="-"?`· ${b.userPhone}`:""}</div>
                       </div>
-                      <div style={{fontSize:9,color:C.textMute,textAlign:"right",paddingTop:2}}>right-click</div>
+                      <div style={{display:"flex",flexDirection:"column",gap:4,alignItems:"flex-end"}}>
+                        {b.status==="confirmed"&&<>
+                          <button onClick={()=>doMarkAttend(b)} disabled={busy} style={{background:"rgba(101,232,58,0.12)",border:`1px solid ${C.lime}44`,color:C.lime,borderRadius:6,padding:"3px 8px",cursor:"pointer",fontSize:10,fontWeight:700}}>✓ Attended</button>
+                          <button onClick={()=>doMarkNoShow(b)} disabled={busy} style={{background:C.redDim,border:`1px solid ${C.red}44`,color:C.red,borderRadius:6,padding:"3px 8px",cursor:"pointer",fontSize:10,fontWeight:700}}>✗ No-show</button>
+                        </>}
+                        {b.status==="attended"&&<span style={{fontSize:10,color:C.lime,fontWeight:700}}>✓ Attended</span>}
+                        {b.status==="noshow"&&<span style={{fontSize:10,color:C.red,fontWeight:700}}>✗ No-show</span>}
+                      </div>
                     </div>
                   </div>;
                 })}
@@ -1780,9 +2021,13 @@ export default function KGolfApp() {
                       </div>
                     </div>
                     {/* Actions */}
-                    <div style={{display:"flex",flexDirection:"column",gap:6,flexShrink:0}}>
-                      <button onClick={()=>setEditMember(u)} style={{background:C.limeDim,border:`1px solid ${C.borderMd}`,color:C.lime,borderRadius:7,padding:"5px 10px",cursor:"pointer",fontSize:11,fontWeight:700}}>Edit</button>
-                      <button onClick={()=>doDeleteUser(u.id)} disabled={busy} style={{background:C.redDim,border:`1px solid ${C.red}44`,color:C.red,borderRadius:7,padding:"5px 10px",cursor:"pointer",fontSize:11,fontWeight:700}}>Delete</button>
+                    <div style={{display:"flex",flexDirection:"column",gap:5,flexShrink:0,alignItems:"flex-end"}}>
+                      <div style={{fontSize:10,color:C.gold,fontWeight:700,textAlign:"right"}}>{getTier(u).icon} {u.points||0}pts</div>
+                      {(u.warnings||0)>0&&<div style={{fontSize:10,color:C.red,fontWeight:700}}>⚠️ {u.warnings}/3</div>}
+                      {u.suspended&&<div style={{fontSize:9,color:C.red,background:C.redDim,border:`1px solid ${C.red}44`,borderRadius:6,padding:"2px 6px",fontWeight:700}}>SUSPENDED</div>}
+                      <button onClick={()=>setEditMember(u)} style={{background:C.limeDim,border:`1px solid ${C.borderMd}`,color:C.lime,borderRadius:7,padding:"4px 9px",cursor:"pointer",fontSize:11,fontWeight:700}}>Edit</button>
+                      {(u.suspended||(u.warnings||0)>0)&&<button onClick={()=>doResetWarnings(u.id)} disabled={busy} style={{background:"rgba(101,232,58,0.08)",border:`1px solid ${C.lime}44`,color:C.lime,borderRadius:7,padding:"4px 9px",cursor:"pointer",fontSize:10,fontWeight:700}}>↺ Reset</button>}
+                      <button onClick={()=>doDeleteUser(u.id)} disabled={busy} style={{background:C.redDim,border:`1px solid ${C.red}44`,color:C.red,borderRadius:7,padding:"4px 9px",cursor:"pointer",fontSize:11,fontWeight:700}}>Delete</button>
                     </div>
                   </div>
                 );
