@@ -798,6 +798,12 @@ export default function KGolfApp() {
   const [selBay,setSelBay]     = useState(null);
   const [selSlots,setSelSlots] = useState([]);
   const [lastBkg,setLastBkg]   = useState(null);
+  // 예약 모드
+  const [bookMode,setBookMode]     = useState(null);   // "practice" | "game"
+  const [numPlayers,setNumPlayers] = useState(1);
+  const [numHoles,setNumHoles]     = useState(18);
+  const [practiceDur,setPracticeDur] = useState(2);   // slots (1=30m,2=1h,3=1.5h,4=2h)
+  const [selStart,setSelStart]     = useState(null);
   const [ctrDate,setCtrDate]   = useState(TODAY);
 
   const [bookModal,setBookModal]   = useState({show:false,bay:null,slots:[]});
@@ -846,6 +852,30 @@ export default function KGolfApp() {
   const getSlotBkg=(date,bay,slot)=>bookings.find(b=>b.date===date&&b.bay===bay&&b.slots?.includes(slot)&&b.status==="confirmed");
   const bayFreeSlots=(date,bay)=>{const t=new Set();bookings.filter(b=>b.date===date&&b.bay===bay&&b.status==="confirmed").forEach(b=>b.slots?.forEach(s=>t.add(s)));return SLOTS.length-t.size;};
   const toggleSlot=(s)=>{if(isSlotTaken(selDate,selBay,s))return;const nx=selSlots.includes(s)?selSlots.filter(x=>x!==s):[...selSlots,s];if(!isConsec(nx)){pop("Please select consecutive time slots only.","err");return;}setSelSlots(nx);};
+
+  // 필요 슬롯 수 계산
+  const getReqSlots = () => {
+    if(bookMode==="practice") return practiceDur;
+    if(bookMode==="game"){
+      const base = numPlayers; // 18홀: 1인=1h(2slots), 2인=2h(4slots)...
+      return numHoles===18 ? base*2 : base; // 9홀은 절반
+    }
+    return 0;
+  };
+  const reqSlots = getReqSlots();
+
+  // 선택한 시작 시간 → 슬롯 배열 자동 계산
+  const getStartSlots = (start) => SLOTS.slice(slotIdx(start), slotIdx(start)+reqSlots);
+
+  // 해당 시작 시간에 충분한 연속 빈 슬롯이 있는지 확인
+  const isStartAvail = (start) => {
+    const slots = getStartSlots(start);
+    if(slots.length < reqSlots) return false; // 마감 시간 초과
+    return slots.every(s=>!isSlotTaken(selDate,selBay,s));
+  };
+
+  // 모드 초기화
+  const resetMode = () => { setBookMode(null); setSelStart(null); setSelSlots([]); };
 
   const doLogin=async()=>{
     if(busy) return;
@@ -916,7 +946,7 @@ export default function KGolfApp() {
     const sorted=[...selSlots].sort((a,b)=>slotIdx(a)-slotIdx(b));
     setBusy(true);
     try{
-      const bkg={id:Date.now().toString(),userId:user.id,userName:sanitize(user.name),userNick:sanitize(user.nick||""),userPhone:sanitize(user.phone||""),userEmail:sanitizeEmail(user.email),bay:selBay,date:selDate,slots:sorted,status:"confirmed",createdAt:new Date().toISOString(),adminCreated:false};
+      const bkg={id:Date.now().toString(),userId:user.id,userName:sanitize(user.name),userNick:sanitize(user.nick||""),userPhone:sanitize(user.phone||""),userEmail:sanitizeEmail(user.email),bay:selBay,date:selDate,slots:sorted,status:"confirmed",createdAt:new Date().toISOString(),adminCreated:false,bookMode,numPlayers:bookMode==="game"?numPlayers:undefined,numHoles:bookMode==="game"?numHoles:undefined};
       await saveBkgs([...bookings,bkg]);
       await auditLog("BOOKING_CREATED",{userId:user.id,bay:selBay,date:selDate});
       // 확인 이메일 발송 (비동기 — 실패해도 예약은 유지)
@@ -1173,7 +1203,7 @@ export default function KGolfApp() {
               const free=bayFreeSlots(selDate,bay),pct=((SLOTS.length-free)/SLOTS.length)*100,full=free===0;
               const barCol=pct>75?C.red:pct>40?C.gold:C.lime;
               return (
-                <button key={bay} className="bay-btn" onClick={()=>{if(!full){setSelBay(bay);setSelSlots([]);setTabView("selectTime");}}} disabled={full}
+                <button key={bay} className="bay-btn" onClick={()=>{if(!full){setSelBay(bay);setSelSlots([]);resetMode();setTabView("selectMode");}}} disabled={full}
                   style={{background:C.card,border:`1px solid ${C.border}`,borderRadius:14,padding:"18px 10px",cursor:full?"not-allowed":"pointer",textAlign:"center",transition:"all .2s",opacity:full?.4:1,boxShadow:C.shadowSm}}>
                   <div style={{fontSize:8,color:C.textMute,marginBottom:4,letterSpacing:"0.15em",textTransform:"uppercase",fontWeight:700}}>BAY</div>
                   <div style={{fontSize:32,fontWeight:900,color:C.lime,lineHeight:1,letterSpacing:"-0.02em"}}>{bay}</div>
@@ -1190,73 +1220,180 @@ export default function KGolfApp() {
       </div>
     );
 
-    // SELECT TIME
-    if(tab==="selectTime") {
-      const sortedSel=[...selSlots].sort((a,b)=>slotIdx(a)-slotIdx(b));
+    // ── SELECT MODE (새 예약 플로우) ─────────────────────────
+    if(tab==="selectMode") {
+      // 게임 예상 시간 계산
+      const gameSlots18 = numPlayers * 2; // 18홀: 1인=2slots(1h), 2인=4slots(2h)...
+      const gameSlots9  = numPlayers;     // 9홀: 절반
+      const gameSlotsReq = numHoles===18 ? gameSlots18 : gameSlots9;
+
+      // 선택된 듀레이션
+      const curReq = bookMode==="practice" ? practiceDur : bookMode==="game" ? gameSlotsReq : 0;
+      const durLabel = (s) => { const m=s*30; return m<60?`${m}min`:m===60?"1hr":`${m/60}hr`; };
+
+      // 가능한 시작 시간 목록
+      const availStarts = bookMode ? SLOTS.filter(s=>isStartAvail(s)) : [];
+
       return (
         <div style={{minHeight:"100vh",background:C.bg}}>
           <style>{CSS}</style><Toast toast={toast}/>
           <Header onBack={()=>setTabView("home")} subtitle={`Bay ${selBay} · ${fmtDate(selDate)}`}/>
           <div style={{maxWidth:500,margin:"0 auto",padding:"20px 16px 100px",animation:"fadeUp .35s ease"}}>
 
-            {/* Selection banner */}
-            {selSlots.length>0?(
-              <div style={{background:`linear-gradient(135deg,${C.surface2},${C.card})`,borderRadius:14,padding:"14px 18px",marginBottom:20,display:"flex",justifyContent:"space-between",alignItems:"center",border:`1px solid ${C.borderMd}`,boxShadow:C.limeGlowSm,animation:"fadeUp .3s ease"}}>
-                <div>
-                  <div style={{fontSize:9,color:C.lime,fontWeight:700,textTransform:"uppercase",letterSpacing:"0.15em"}}>Selected</div>
-                  <div style={{fontSize:19,fontWeight:800,color:C.white,marginTop:3}}>{sortedSel[0]} <span style={{color:C.textMute}}>→</span> {slotEnd(sortedSel[sortedSel.length-1])}</div>
-                  <div style={{display:"flex",gap:8,marginTop:6}}><Tag color={C.lime}>{totalDur(selSlots)}</Tag><Tag color={C.textSub}>{selSlots.length} slots</Tag></div>
+            {/* ── STEP 1: 모드 선택 ── */}
+            <SectionLabel>What would you like to do?</SectionLabel>
+            <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:12,marginBottom:24}}>
+              {[
+                {id:"practice", icon:"🏌️", title:"Practice", sub:"Driving range &
+short game"},
+                {id:"game",     icon:"⛳", title:"Game",     sub:"Full round on
+course"},
+              ].map(({id,icon,title,sub})=>{
+                const sel = bookMode===id;
+                return (
+                  <button key={id} onClick={()=>{setBookMode(id);setSelStart(null);}}
+                    style={{background:sel?C.limeDim:C.card,border:`2px solid ${sel?C.lime:C.border}`,borderRadius:16,padding:"20px 14px",cursor:"pointer",textAlign:"center",transition:"all .2s",boxShadow:sel?C.limeGlow:"none",fontFamily:"inherit"}}>
+                    <div style={{fontSize:36,marginBottom:10}}>{icon}</div>
+                    <div style={{fontSize:16,fontWeight:900,color:sel?C.lime:C.white,marginBottom:6}}>{title}</div>
+                    <div style={{fontSize:11,color:C.textMute,lineHeight:1.5,whiteSpace:"pre-line"}}>{sub}</div>
+                  </button>
+                );
+              })}
+            </div>
+
+            {/* ── STEP 2: 세부 설정 ── */}
+            {bookMode==="practice"&&(
+              <div style={{animation:"fadeUp .3s ease",marginBottom:24}}>
+                <SectionLabel>Practice Duration</SectionLabel>
+                <div style={{display:"grid",gridTemplateColumns:"repeat(4,1fr)",gap:8}}>
+                  {[1,2,3,4].map(s=>{
+                    const sel=practiceDur===s;
+                    return <button key={s} onClick={()=>setPracticeDur(s)}
+                      style={{background:sel?C.lime:C.card,border:`1.5px solid ${sel?C.lime:C.border}`,borderRadius:12,padding:"14px 6px",cursor:"pointer",fontFamily:"inherit",textAlign:"center",boxShadow:sel?C.limeGlowSm:"none",transition:"all .15s"}}>
+                      <div style={{fontSize:18,fontWeight:900,color:sel?"#030803":C.white}}>{durLabel(s)}</div>
+                      <div style={{fontSize:9,color:sel?"#030803":C.textMute,marginTop:3,letterSpacing:"0.05em"}}>{s===1?"min":"session"}</div>
+                    </button>;
+                  })}
                 </div>
-                <div style={{display:"flex",flexDirection:"column",alignItems:"flex-end",gap:8}}>
-                  <button onClick={()=>setSelSlots([])} style={{background:C.surface,border:`1px solid ${C.border}`,color:C.textSub,borderRadius:8,padding:"5px 12px",cursor:"pointer",fontSize:11,fontWeight:600}}>Clear</button>
-                  <button onClick={()=>setTabView("confirmView")} style={{background:C.lime,border:"none",color:"#030803",borderRadius:8,padding:"7px 14px",cursor:"pointer",fontSize:12,fontWeight:800,boxShadow:C.limeGlowSm}}>Book →</button>
-                </div>
-              </div>
-            ):(
-              <div style={{background:C.surface,borderRadius:12,padding:"12px 16px",marginBottom:20,border:`1px solid ${C.border}`,display:"flex",alignItems:"center",gap:12}}>
-                <div style={{color:C.lime,fontSize:18}}>→</div>
-                <div><div style={{fontSize:13,fontWeight:700,color:C.white}}>Tap to select time slots</div><div style={{fontSize:11,color:C.textMute,marginTop:2}}>Select consecutive 30-min slots</div></div>
               </div>
             )}
 
-            {/* AM/PM/Evening groups */}
-            {[["AM  ·  09:00–12:00",[9,12]],["PM  ·  12:00–17:00",[12,17]],["Evening  ·  17:00–23:00",[17,23]]].map(([label,[from,to]])=>{
-              const groups=HOUR_GROUPS.filter(g=>{const h=parseInt(g.label);return h>=from&&h<to;});
-              if(!groups.length) return null;
-              return (
-                <div key={label} style={{marginBottom:24}}>
-                  <div style={{fontSize:9,fontWeight:700,color:C.textMute,textTransform:"uppercase",letterSpacing:"0.15em",marginBottom:12,display:"flex",alignItems:"center",gap:8}}>
-                    <div style={{flex:1,height:1,background:C.border}}/>
-                    {label}
-                    <div style={{flex:1,height:1,background:C.border}}/>
+            {bookMode==="game"&&(
+              <div style={{animation:"fadeUp .3s ease",marginBottom:24}}>
+                {/* 인원 수 */}
+                <SectionLabel>Number of Players</SectionLabel>
+                <div style={{display:"grid",gridTemplateColumns:"repeat(4,1fr)",gap:8,marginBottom:18}}>
+                  {[1,2,3,4].map(n=>{
+                    const sel=numPlayers===n;
+                    return <button key={n} onClick={()=>{setNumPlayers(n);setSelStart(null);}}
+                      style={{background:sel?C.lime:C.card,border:`1.5px solid ${sel?C.lime:C.border}`,borderRadius:12,padding:"14px 6px",cursor:"pointer",fontFamily:"inherit",textAlign:"center",boxShadow:sel?C.limeGlowSm:"none",transition:"all .15s"}}>
+                      <div style={{fontSize:26,fontWeight:900,color:sel?"#030803":C.white}}>{n}</div>
+                      <div style={{fontSize:9,color:sel?"#030803":C.textMute,marginTop:3}}>{n===1?"player":"players"}</div>
+                    </button>;
+                  })}
+                </div>
+
+                {/* 홀 수 */}
+                <SectionLabel>Number of Holes</SectionLabel>
+                <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8,marginBottom:16}}>
+                  {[18,9].map(h=>{
+                    const sel=numHoles===h;
+                    const slotCount = h===18 ? numPlayers*2 : numPlayers;
+                    return <button key={h} onClick={()=>{setNumHoles(h);setSelStart(null);}}
+                      style={{background:sel?C.limeDim:C.card,border:`2px solid ${sel?C.lime:C.border}`,borderRadius:12,padding:"16px",cursor:"pointer",fontFamily:"inherit",textAlign:"center",boxShadow:sel?C.limeGlowSm:"none",transition:"all .2s"}}>
+                      <div style={{fontSize:22,fontWeight:900,color:sel?C.lime:C.white}}>{h} holes</div>
+                      <div style={{fontSize:11,color:sel?C.lime:C.textMute,marginTop:4,fontWeight:600}}>~ {durLabel(slotCount)}</div>
+                    </button>;
+                  })}
+                </div>
+
+                {/* 예상 시간 안내 */}
+                <div style={{background:C.limeDim,borderRadius:12,padding:"14px 16px",border:`1px solid ${C.borderMd}`}}>
+                  <div style={{fontSize:9,color:C.lime,fontWeight:700,textTransform:"uppercase",letterSpacing:"0.12em",marginBottom:6}}>Estimated Time</div>
+                  <div style={{fontSize:20,fontWeight:900,color:C.white}}>
+                    {numPlayers} player{numPlayers>1?"s":""} · {numHoles} holes
+                    <span style={{color:C.lime}}> → ~{durLabel(gameSlotsReq)}</span>
                   </div>
-                  <div style={{display:"flex",flexDirection:"column",gap:5}}>
-                    {groups.map(({label:hl,slots})=>(
-                      <div key={hl} style={{display:"flex",alignItems:"center",gap:8}}>
-                        <div style={{width:40,fontSize:11,fontWeight:700,color:C.textMute,flexShrink:0,textAlign:"right"}}>{hl}</div>
-                        {slots.map(slot=>{
-                          const taken=isSlotTaken(selDate,selBay,slot),sel=selSlots.includes(slot);
-                          const bkg=taken?getSlotBkg(selDate,selBay,slot):null,isHalf=slot.endsWith(":30");
-                          return (
-                            <button key={slot} className={!taken&&!sel?"slot-btn":""} onClick={()=>!taken&&toggleSlot(slot)} disabled={taken}
-                              style={{flex:1,padding:"11px 4px",borderRadius:10,background:sel?C.lime:taken?C.surface2:C.card,border:`1px solid ${sel?C.lime:taken?C.border:C.border}`,color:sel?"#030803":taken?C.textMute:C.white,cursor:taken?"not-allowed":"pointer",textAlign:"center",transition:"all .12s",boxShadow:sel?C.limeGlowSm:"none",opacity:taken?.5:1}}>
-                              <div style={{fontSize:11,fontWeight:800,letterSpacing:"0.02em"}}>{isHalf?":30":":00"}</div>
-                              {taken?<div style={{fontSize:8,marginTop:3,color:C.textMute,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap",maxWidth:"100%",padding:"0 2px"}}>{bkg?(bkg.userNick||bkg.userName||"").slice(0,5):"·"}</div>
-                              :sel?<div style={{fontSize:8,marginTop:3,color:"#030803",fontWeight:700}}>✓</div>
-                              :<div style={{fontSize:8,marginTop:3,color:C.lime,opacity:.7}}>free</div>}
-                            </button>
-                          );
-                        })}
-                      </div>
-                    ))}
+                  <div style={{fontSize:11,color:C.textMute,marginTop:6,lineHeight:1.6}}>
+                    Based on approx. {numHoles===18?"1 hour":"30 min"} per player per round.
+                    Final time may vary.
                   </div>
                 </div>
-              );
-            })}
+              </div>
+            )}
+
+            {/* ── STEP 3: 시작 시간 선택 ── */}
+            {bookMode&&curReq>0&&(
+              <div style={{animation:"fadeUp .3s ease"}}>
+                <SectionLabel>Select Start Time</SectionLabel>
+                {availStarts.length===0?(
+                  <div style={{textAlign:"center",padding:"28px 20px",background:C.surface,borderRadius:12,border:`1px solid ${C.border}`,color:C.textMute,fontSize:13}}>
+                    No available slots for this duration on this date.<br/>
+                    <span style={{fontSize:11,marginTop:6,display:"block"}}>Try a different date or reduce the duration.</span>
+                  </div>
+                ):(
+                  <>
+                    {/* AM / PM / Evening 그룹 */}
+                    {[["AM",9,12],["PM",12,17],["Evening",17,23]].map(([label,from,to])=>{
+                      const times = availStarts.filter(s=>{ const h=parseInt(s); return h>=from&&h<to; });
+                      if(!times.length) return null;
+                      return (
+                        <div key={label} style={{marginBottom:18}}>
+                          <div style={{fontSize:9,fontWeight:700,color:C.textMute,textTransform:"uppercase",letterSpacing:"0.15em",marginBottom:10,display:"flex",alignItems:"center",gap:8}}>
+                            <div style={{flex:1,height:1,background:C.border}}/>{label}<div style={{flex:1,height:1,background:C.border}}/>
+                          </div>
+                          <div style={{display:"flex",flexWrap:"wrap",gap:8}}>
+                            {times.map(t=>{
+                              const sel=selStart===t;
+                              const endSlots=getStartSlots(t);
+                              const endT=endSlots.length>0?slotEnd(endSlots[endSlots.length-1]):"";
+                              return (
+                                <button key={t} onClick={()=>setSelStart(sel?null:t)}
+                                  style={{background:sel?C.lime:C.card,border:`1.5px solid ${sel?C.lime:C.border}`,borderRadius:12,padding:"12px 16px",cursor:"pointer",fontFamily:"inherit",textAlign:"center",minWidth:90,boxShadow:sel?C.limeGlowSm:"none",transition:"all .15s"}}>
+                                  <div style={{fontSize:16,fontWeight:900,color:sel?"#030803":C.white}}>{t}</div>
+                                  <div style={{fontSize:10,color:sel?"#030803":C.textMute,marginTop:2}}>→ {endT}</div>
+                                </button>
+                              );
+                            })}
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </>
+                )}
+
+                {/* 예약 버튼 */}
+                {selStart&&(
+                  <div style={{position:"sticky",bottom:70,left:0,right:0,padding:"12px 0",animation:"fadeUp .2s ease"}}>
+                    <div style={{background:`linear-gradient(135deg,${C.surface2},${C.card})`,borderRadius:14,padding:"14px 18px",marginBottom:12,border:`1px solid ${C.borderMd}`,boxShadow:C.limeGlowSm}}>
+                      <div style={{fontSize:9,color:C.lime,fontWeight:700,textTransform:"uppercase",letterSpacing:"0.12em",marginBottom:4}}>Selected</div>
+                      <div style={{fontSize:20,fontWeight:900,color:C.white}}>
+                        {selStart} <span style={{color:C.textMute}}>→</span> {slotEnd(getStartSlots(selStart)[getStartSlots(selStart).length-1])}
+                      </div>
+                      <div style={{display:"flex",gap:8,marginTop:6}}>
+                        <Tag color={C.lime}>{durLabel(curReq)}</Tag>
+                        <Tag color={C.textSub}>{bookMode==="game"?`${numPlayers}P · ${numHoles} holes`:"Practice"}</Tag>
+                      </div>
+                    </div>
+                    <Btn full v="primary" sz="lg" onClick={()=>{
+                      const slots=getStartSlots(selStart);
+                      // 재확인: 혹시 사이에 예약된 슬롯이 생겼는지
+                      if(slots.some(s=>isSlotTaken(selDate,selBay,s))){pop("Oops! A slot was just taken. Please select another time.","err");setSelStart(null);return;}
+                      setSelSlots(slots);
+                      setTabView("confirmView");
+                    }}>Review & Confirm →</Btn>
+                  </div>
+                )}
+              </div>
+            )}
+
           </div>
         </div>
       );
     }
+
+    // SELECT TIME (legacy fallback — not used in normal flow)
+    if(tab==="selectTime") { return null; }
 
     // CONFIRM VIEW
     if(tab==="confirmView") {
@@ -1264,10 +1401,16 @@ export default function KGolfApp() {
       return (
         <div style={{minHeight:"100vh",background:C.bg}}>
           <style>{CSS}</style><Toast toast={toast}/>
-          <Header onBack={()=>setTabView("selectTime")} subtitle="Review & Confirm"/>
+          <Header onBack={()=>setTabView("selectMode")} subtitle="Review & Confirm"/>
           <div style={{maxWidth:480,margin:"0 auto",padding:"20px 16px",animation:"fadeUp .35s ease"}}>
             <Card style={{marginBottom:14}} glow>
               <SectionLabel>Booking Details</SectionLabel>
+              {/* Mode badge */}
+              <div style={{display:"flex",gap:8,marginBottom:14,flexWrap:"wrap"}}>
+                <Tag color={C.lime}>{bookMode==="game"?"⛳ Game":"🏌️ Practice"}</Tag>
+                {bookMode==="game"&&<Tag color={C.gold}>{numPlayers} player{numPlayers>1?"s":""}</Tag>}
+                {bookMode==="game"&&<Tag color={C.blue}>{numHoles} holes</Tag>}
+              </div>
               {[["Date",fmtDateLng(selDate)],["Bay",`Bay ${selBay}`],["Start",sorted[0]],["End",slotEnd(sorted[sorted.length-1])],["Duration",totalDur(sorted)]].map(([k,v])=>(
                 <div key={k} style={{display:"flex",justifyContent:"space-between",alignItems:"center",padding:"11px 0",borderBottom:`1px solid ${C.border}`,fontSize:14}}>
                   <span style={{color:C.textSub,fontSize:11,fontWeight:700,letterSpacing:"0.06em",textTransform:"uppercase"}}>{k}</span>
@@ -1308,7 +1451,7 @@ export default function KGolfApp() {
                   <div style={{fontSize:9,fontWeight:700,color:C.lime,textTransform:"uppercase",letterSpacing:"0.15em"}}>Booking Receipt</div>
                   <Tag color={C.lime}>Confirmed</Tag>
                 </div>
-                {[["Bay",`Bay ${lastBkg.bay}`],["Date",fmtDateLng(lastBkg.date)],["Start",sorted[0]],["End",sorted.length>0?slotEnd(sorted[sorted.length-1]):"—"],["Duration",totalDur(lastBkg.slots)],["Ref","#"+lastBkg.id?.slice(-8).toUpperCase()]].map(([k,v])=>(
+                {[["Bay",`Bay ${lastBkg.bay}`],["Type",lastBkg.bookMode==="game"?`⛳ Game · ${lastBkg.numPlayers}P · ${lastBkg.numHoles}H`:"🏌️ Practice"],["Date",fmtDateLng(lastBkg.date)],["Start",sorted[0]],["End",sorted.length>0?slotEnd(sorted[sorted.length-1]):"—"],["Duration",totalDur(lastBkg.slots)],["Ref","#"+lastBkg.id?.slice(-8).toUpperCase()]].map(([k,v])=>(
                   <div key={k} style={{display:"flex",justifyContent:"space-between",padding:"10px 0",borderBottom:`1px solid ${C.border}`,fontSize:13}}>
                     <span style={{color:C.textSub,fontSize:10,fontWeight:700,letterSpacing:"0.06em",textTransform:"uppercase"}}>{k}</span>
                     <span style={{color:k==="Bay"?C.lime:k==="Ref"?C.gold:C.white,fontWeight:700}}>{v}</span>
