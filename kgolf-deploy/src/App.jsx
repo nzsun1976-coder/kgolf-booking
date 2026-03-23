@@ -98,12 +98,17 @@ const EJ_TPL_CANCEL = import.meta.env.VITE_EMAILJS_CANCEL_TEMPLATE_ID ?? EJ_TPL;
 
 async function sendCancellationEmail(bkg, allUsers) {
   if (!EJ_KEY || !EJ_SVC) { console.warn("[email] EmailJS not configured"); return; }
-  if (!bkg.userEmail) { console.warn("[email] No email address for cancellation"); return; }
+  // userEmail이 없으면 regUsers에서 찾기 (이전 버전 부킹 호환)
+  const member = allUsers.find(u=>u.id===bkg.userId);
+  const toEmail = bkg.userEmail || member?.email || "";
+  if (!toEmail) { console.warn("[email] No email address found for", bkg.userName); return; }
+  // 취소 템플릿 없으면 확인 템플릿으로 fallback (환경변수 미설정 대비)
+  const tpl = EJ_TPL_CANCEL || EJ_TPL;
+  if (!tpl) { console.warn("[email] No template ID configured"); return; }
   try {
     const sorted = [...(bkg.slots||[])].sort((a,b)=>slotIdx(a)-slotIdx(b));
-    const member = allUsers.find(u=>u.id===bkg.userId);
-    await emailjs.send(EJ_SVC, EJ_TPL_CANCEL, {
-      to_email:       bkg.userEmail,
+    await emailjs.send(EJ_SVC, tpl, {
+      to_email: toEmail,
       to_name:        sanitize(bkg.userName),
       booking_ref:    "#" + bkg.id.slice(-8).toUpperCase(),
       member_no:      member?.memberNo ? member.memberNo : (bkg.userId?.startsWith("walkin_") ? "Walk-in Member" : "—"),
@@ -128,13 +133,16 @@ const EJ_TPL_CHANGE = import.meta.env.VITE_EMAILJS_CHANGE_TEMPLATE_ID ?? EJ_TPL;
 
 async function sendChangeEmail(bkg, newDate, newSlots, allUsers) {
   if (!EJ_KEY || !EJ_SVC) return;
-  if (!bkg.userEmail) return;
+  const member = allUsers.find(u=>u.id===bkg.userId);
+  const toEmail = bkg.userEmail || member?.email || "";
+  if (!toEmail) { console.warn("[email] No email for change notification:", bkg.userName); return; }
+  const tpl = EJ_TPL_CHANGE || EJ_TPL;
+  if (!tpl) return;
   try {
     const sorted = [...newSlots].sort((a,b)=>slotIdx(a)-slotIdx(b));
     const oldSorted = [...(bkg.slots||[])].sort((a,b)=>slotIdx(a)-slotIdx(b));
-    const member = allUsers.find(u=>u.id===bkg.userId);
-    await emailjs.send(EJ_SVC, EJ_TPL_CHANGE, {
-      to_email:         bkg.userEmail,
+    await emailjs.send(EJ_SVC, tpl, {
+      to_email:         toEmail,
       to_name:          sanitize(bkg.userName),
       booking_ref:      "#" + bkg.id.slice(-8).toUpperCase(),
       member_no:        member?.memberNo ? member.memberNo : (bkg.userId?.startsWith("walkin_") ? "Walk-in Member" : "—"),
@@ -199,8 +207,10 @@ const isConsec = (slots) => { if(slots.length<=1) return true; const ix=slots.ma
 const totalDur = (slots) => { const m=(slots?.length||0)*30; const h=Math.floor(m/60),r=m%60; return h>0?(r>0?`${h}h ${r}m`:`${h}h`):`${m}m`; };
 const fmtDate   = (d) => d?new Date(d+"T12:00").toLocaleDateString("en-NZ",{weekday:"short",month:"short",day:"numeric"}):"";
 const fmtDateLng= (d) => d?new Date(d+"T12:00").toLocaleDateString("en-NZ",{weekday:"long",year:"numeric",month:"long",day:"numeric"}):"";
-const getDates  = (n=14) => Array.from({length:n},(_,i)=>{ const d=new Date(); d.setDate(d.getDate()+i); return d.toISOString().split("T")[0]; });
-const DATES     = getDates();
+// 과거 30일 + 오늘 + 미래 30일 = 총 61일
+const TODAY = new Date().toISOString().split("T")[0];
+const getDates = () => Array.from({length:61},(_,i)=>{ const d=new Date(); d.setDate(d.getDate()-30+i); return d.toISOString().split("T")[0]; });
+const DATES = getDates();
 const SESSION_MS= 30*60*1000;
 const genMemberNo = (users) => `KG-${String(users.length+1).padStart(4,"0")}`;
 
@@ -698,7 +708,7 @@ function ChangeTimeModal({show,onClose,booking,onConfirm,busy}) {
       <div style={{marginBottom:16}}>
         <div style={{fontSize:10,color:C.textSub,fontWeight:700,letterSpacing:"0.12em",textTransform:"uppercase",marginBottom:8}}>Date</div>
         <select value={newDate} onChange={e=>setNewDate(e.target.value)} style={{width:"100%",padding:"11px 14px",background:C.surface2,border:`1px solid ${C.border}`,borderRadius:10,fontSize:14,outline:"none",fontFamily:"inherit",color:C.white}}>
-          {DATES.slice(0,14).map((d,i)=><option key={d} value={d}>{i===0?"Today":fmtDate(d)}</option>)}
+          {DATES.map((d)=><option key={d} value={d}>{d===TODAY?"Today":fmtDate(d)}</option>)}
         </select>
       </div>
       <div style={{marginBottom:16}}>
@@ -779,11 +789,11 @@ export default function KGolfApp() {
   const [loading,setLoading]     = useState(true);
   const [busy,setBusy]           = useState(false);
 
-  const [selDate,setSelDate]   = useState(DATES[0]);
+  const [selDate,setSelDate]   = useState(TODAY);
   const [selBay,setSelBay]     = useState(null);
   const [selSlots,setSelSlots] = useState([]);
   const [lastBkg,setLastBkg]   = useState(null);
-  const [ctrDate,setCtrDate]   = useState(DATES[0]);
+  const [ctrDate,setCtrDate]   = useState(TODAY);
 
   const [bookModal,setBookModal]   = useState({show:false,bay:null,slots:[]});
   const [ctxMenu,setCtxMenu]       = useState(null);
@@ -879,7 +889,20 @@ export default function KGolfApp() {
     finally{setBusy(false);}
   };
 
-  const doForgotStep1=()=>{const email=sanitizeEmail(forgotEmail);if(!validateEmail(email)){pop("Please enter a valid email.","err");return;}const u=regUsers.find(u=>sanitizeEmail(u.email)===email);if(!u){pop("If that email is registered, you can now set a new password.");setShowForgot(false);setForgotEmail("");return;} setForgotUser(u);setForgotStep(2);}; 
+  const doForgotStep1=()=>{
+    const email=sanitizeEmail(forgotEmail);
+    if(!validateEmail(email)){pop("Please enter a valid email.","err");return;}
+    const u=regUsers.find(u=>sanitizeEmail(u.email)===email);
+    if(!u){
+      // 이메일 열거 방지 — 찾든 못찾든 같은 메시지, 하지만 step 2는 가지 않음
+      pop("If that email is registered, a reset link has been sent.","ok");
+      setShowForgot(false);
+      setForgotEmail("");
+      return;
+    }
+    setForgotUser(u);
+    setForgotStep(2);
+  };
   const doForgotStep2=async()=>{if(!forgotUser){pop("Please go back.","err");return;}if(!validatePassword(forgotNew)){pop("Password must be 8–128 characters.","err");return;}setBusy(true);try{const salt=generateSalt(),passHash=await hashPassword(forgotNew,salt);await saveUsrs(regUsers.map(u=>u.id===forgotUser.id?{...u,salt,passHash,pass:undefined}:u));await auditLog("PASS_RESET",{email:forgotUser.email});pop("Password updated. Please sign in.");setShowForgot(false);setForgotEmail("");setForgotNew("");setForgotStep(1);setForgotUser(null);}catch(e){console.error(e);pop(genericErr(),"err");}finally{setBusy(false);};};
 
   const doConfirm=async()=>{
@@ -988,13 +1011,26 @@ export default function KGolfApp() {
 
   const myBkgs=user?bookings.filter(b=>b.userId===user.id).sort((a,b)=>b.createdAt.localeCompare(a.createdAt)):[];
   const allConfBkgs=bookings.filter(b=>b.status==="confirmed"&&b.userId!=="admin");
-  const todayAllBkgs=bookings.filter(b=>b.date===DATES[0]&&b.status==="confirmed");
+  const todayAllBkgs=bookings.filter(b=>b.date===TODAY&&b.status==="confirmed");
   const filteredUsers=regUsers.filter(u=>sanitize(u.name||"").toLowerCase().includes(userSearch.toLowerCase())||sanitizeEmail(u.email||"").includes(userSearch.toLowerCase())||sanitize(u.nick||"").toLowerCase().includes(userSearch.toLowerCase())||sanitize(u.phone||"").includes(userSearch)||(u.memberNo||"").toLowerCase().includes(userSearch.toLowerCase()));
 
   const ForgotModal=(
     <Modal show={showForgot} onClose={()=>{setShowForgot(false);setForgotStep(1);setForgotEmail("");setForgotNew("");}} title="Reset Password">
       {forgotStep===1?(<><p style={{color:C.textSub,fontSize:13,marginBottom:18,lineHeight:1.6}}>Enter your registered email to reset your password.</p><Inp label="Email" value={forgotEmail} onChange={setForgotEmail} type="email" placeholder="your@email.com" autoFocus/><Btn full v="primary" onClick={doForgotStep1} disabled={busy}>Find Account →</Btn></>)
-      :(<>{forgotUser&&<div style={{background:C.limeDim,borderRadius:10,padding:"12px 16px",marginBottom:16,border:`1px solid ${C.borderMd}`}}><div style={{fontSize:9,color:C.lime,fontWeight:700,letterSpacing:"0.1em",textTransform:"uppercase"}}>Account found</div><div style={{fontSize:16,fontWeight:800,color:C.white,marginTop:4}}>{forgotUser.name}</div></div>}<Inp label="New Password" value={forgotNew} onChange={setForgotNew} type="password" placeholder="Min 8 characters" maxLen={128} autoFocus/><Btn full v="primary" onClick={doForgotStep2} disabled={busy}>Update Password</Btn></>)}
+      :(<>{forgotUser?(
+          <>
+            <div style={{background:C.limeDim,borderRadius:10,padding:"12px 16px",marginBottom:16,border:`1px solid ${C.borderMd}`}}>
+              <div style={{fontSize:9,color:C.lime,fontWeight:700,letterSpacing:"0.1em",textTransform:"uppercase"}}>Account found</div>
+              <div style={{fontSize:16,fontWeight:800,color:C.white,marginTop:4}}>{forgotUser.name}</div>
+            </div>
+            <Inp label="New Password" value={forgotNew} onChange={setForgotNew} type="password" placeholder="Min 8 characters" maxLen={128} autoFocus/>
+            <Btn full v="primary" onClick={doForgotStep2} disabled={busy||!forgotUser}>Update Password</Btn>
+          </>
+        ):(
+          <div style={{textAlign:"center",padding:"20px 0",color:C.textSub,fontSize:13}}>
+            Session expired. Please go back and try again.
+          </div>
+        )}</>)}
     </Modal>
   );
 
@@ -1098,11 +1134,11 @@ export default function KGolfApp() {
 
           {/* Date selector */}
           <SectionLabel>Select Date</SectionLabel>
-          <div style={{display:"flex",gap:8,overflowX:"auto",paddingBottom:8,marginBottom:24}}>
+          <div ref={el=>{if(el){const todayBtn=el.querySelector("[data-today]");if(todayBtn)todayBtn.scrollIntoView({inline:"center",behavior:"auto"});}}} style={{display:"flex",gap:8,overflowX:"auto",paddingBottom:8,marginBottom:24}}>
             {DATES.map((d,idx)=>{
               const dt=new Date(d+"T12:00"),sel=d===selDate;
-              return <button key={d} className="date-btn" onClick={()=>{setSelDate(d);setSelSlots([]);setSelBay(null);}} style={{flexShrink:0,padding:"11px 12px",borderRadius:12,background:sel?C.lime:C.card,border:`1px solid ${sel?C.lime:C.border}`,color:sel?"#030803":C.white,cursor:"pointer",textAlign:"center",minWidth:54,transition:"all .15s",boxShadow:sel?C.limeGlow:"none"}}>
-                <div style={{fontSize:8,fontWeight:700,textTransform:"uppercase",letterSpacing:"0.1em",marginBottom:3,opacity:.8}}>{idx===0?"Today":dt.toLocaleDateString("en-NZ",{weekday:"short"})}</div>
+              return <button key={d} className="date-btn" onClick={()=>{setSelDate(d);setSelSlots([]);setSelBay(null);}} data-today={d===TODAY?"true":undefined} style={{flexShrink:0,padding:"11px 12px",borderRadius:12,background:sel?C.lime:C.card,border:`1px solid ${sel?C.lime:C.border}`,color:sel?"#030803":C.white,cursor:"pointer",textAlign:"center",minWidth:54,transition:"all .15s",boxShadow:sel?C.limeGlow:"none",opacity:d<TODAY?0.5:1}}>
+                <div style={{fontSize:8,fontWeight:700,textTransform:"uppercase",letterSpacing:"0.1em",marginBottom:3,opacity:.8}}>{d===TODAY?"Today":dt.toLocaleDateString("en-NZ",{weekday:"short"})}</div>
                 <div style={{fontSize:22,fontWeight:900,lineHeight:1}}>{dt.getDate()}</div>
                 <div style={{fontSize:8,marginTop:3,opacity:.7}}>{dt.toLocaleDateString("en-NZ",{month:"short"})}</div>
               </button>;
@@ -1381,7 +1417,7 @@ export default function KGolfApp() {
 
     const todayBkgs=bookings.filter(b=>b.date===ctrDate&&b.status==="confirmed").sort((a,b)=>{const sa=a.slots?.[0]||"",sb=b.slots?.[0]||"";return sa.localeCompare(sb)||a.bay-b.bay;});
     const allConfBkgs2=bookings.filter(b=>b.status==="confirmed"&&b.userId!=="admin");
-    const todayAll2=bookings.filter(b=>b.date===DATES[0]&&b.status==="confirmed");
+    const todayAll2=bookings.filter(b=>b.date===TODAY&&b.status==="confirmed");
     const statsData2={members:{title:"All Members",items:filteredUsers,type:"users"},bookings:{title:"Total Bookings",items:allConfBkgs2,type:"bookings"},today:{title:"Active Today",items:todayAll2,type:"bookings"}};
 
     return (
@@ -1418,9 +1454,9 @@ export default function KGolfApp() {
         {/* TIMETABLE */}
         {ctrTab==="timetable"&&(<>
           <div style={{padding:"10px 20px",display:"flex",gap:8,overflowX:"auto",borderBottom:`1px solid ${C.border}`,background:C.surface}}>
-            {DATES.slice(0,7).map((d,i)=>(
+            {DATES.filter(d=>d>=new Date(new Date().setDate(new Date().getDate()-3)).toISOString().split("T")[0]).slice(0,10).map((d)=>(
               <button key={d} onClick={()=>setCtrDate(d)} style={{flexShrink:0,padding:"7px 14px",borderRadius:8,background:d===ctrDate?C.lime:C.surface2,border:`1px solid ${d===ctrDate?C.lime:C.border}`,color:d===ctrDate?"#030803":C.white,cursor:"pointer",fontWeight:700,fontSize:11,letterSpacing:"0.05em",boxShadow:d===ctrDate?C.limeGlowSm:"none",transition:"all .15s"}}>
-                {i===0?"Today":fmtDate(d)}
+                {d===TODAY?"Today":fmtDate(d)}
               </button>
             ))}
           </div>
