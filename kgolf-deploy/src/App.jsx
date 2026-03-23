@@ -13,12 +13,12 @@ import { getFirestore, doc, setDoc, onSnapshot, getDoc } from "firebase/firestor
 import emailjs from "@emailjs/browser";
 
 const firebaseConfig = {
-  apiKey: "AIzaSyDBRCKA-yd7oUr19_UiIP6TTlObJ52DQ08",
-  authDomain: "kgolf-booking-b909e.firebaseapp.com",
-  projectId: "kgolf-booking-b909e",
-  storageBucket: "kgolf-booking-b909e.firebasestorage.app",
-  messagingSenderId: "165994639150",
-  appId: "1:165994639150:web:7285f0502f3639185654bf"
+  apiKey:            import.meta.env.VITE_FB_API_KEY            ?? "AIzaSyDBRCKA-yd7oUr19_UiIP6TTlObJ52DQ08",
+  authDomain:        import.meta.env.VITE_FB_AUTH_DOMAIN        ?? "kgolf-booking-b909e.firebaseapp.com",
+  projectId:         import.meta.env.VITE_FB_PROJECT_ID         ?? "kgolf-booking-b909e",
+  storageBucket:     import.meta.env.VITE_FB_STORAGE_BUCKET     ?? "kgolf-booking-b909e.firebasestorage.app",
+  messagingSenderId: import.meta.env.VITE_FB_MESSAGING_SENDER_ID?? "165994639150",
+  appId:             import.meta.env.VITE_FB_APP_ID             ?? "1:165994639150:web:7285f0502f3639185654bf",
 };
 const firebaseApp = initializeApp(firebaseConfig);
 const db = getFirestore(firebaseApp);
@@ -840,7 +840,7 @@ export default function KGolfApp() {
   const isSlotTaken=(date,bay,slot)=>bookings.some(b=>b.date===date&&b.bay===bay&&b.slots?.includes(slot)&&b.status==="confirmed");
   const getSlotBkg=(date,bay,slot)=>bookings.find(b=>b.date===date&&b.bay===bay&&b.slots?.includes(slot)&&b.status==="confirmed");
   const bayFreeSlots=(date,bay)=>{const t=new Set();bookings.filter(b=>b.date===date&&b.bay===bay&&b.status==="confirmed").forEach(b=>b.slots?.forEach(s=>t.add(s)));return SLOTS.length-t.size;};
-  const toggleSlot=(s)=>{if(isSlotTaken(selDate,selBay,s))return;const nx=selSlots.includes(s)?selSlots.filter(x=>x!==s):[...selSlots,s];if(!isConsec(nx)){pop("Please select consecutive time slots only.","err");return;}setSelSlots(nx);};
+  const toggleSlot=(s)=>{if(selDate<TODAY){pop("Past dates are view only.","err");return;}if(isSlotTaken(selDate,selBay,s))return;const nx=selSlots.includes(s)?selSlots.filter(x=>x!==s):[...selSlots,s];if(!isConsec(nx)){pop("Please select consecutive time slots only.","err");return;}setSelSlots(nx);};
 
   const doLogin=async()=>{
     if(busy) return;
@@ -1137,7 +1137,7 @@ export default function KGolfApp() {
           <div ref={el=>{if(el){const todayBtn=el.querySelector("[data-today]");if(todayBtn)todayBtn.scrollIntoView({inline:"center",behavior:"auto"});}}} style={{display:"flex",gap:8,overflowX:"auto",paddingBottom:8,marginBottom:24}}>
             {DATES.map((d,idx)=>{
               const dt=new Date(d+"T12:00"),sel=d===selDate;
-              return <button key={d} className="date-btn" onClick={()=>{setSelDate(d);setSelSlots([]);setSelBay(null);}} data-today={d===TODAY?"true":undefined} style={{flexShrink:0,padding:"11px 12px",borderRadius:12,background:sel?C.lime:C.card,border:`1px solid ${sel?C.lime:C.border}`,color:sel?"#030803":C.white,cursor:"pointer",textAlign:"center",minWidth:54,transition:"all .15s",boxShadow:sel?C.limeGlow:"none",opacity:d<TODAY?0.5:1}}>
+              return <button key={d} className="date-btn" onClick={()=>{setSelDate(d);setSelSlots([]);setSelBay(null);}} data-today={d===TODAY?"true":undefined} style={{flexShrink:0,padding:"11px 12px",borderRadius:12,background:sel?C.lime:C.card,border:`1px solid ${sel?C.lime:C.border}`,color:sel?"#030803":C.white,cursor:"pointer",textAlign:"center",minWidth:54,transition:"all .15s",boxShadow:sel?C.limeGlow:"none",opacity:d<TODAY?0.45:1}}>
                 <div style={{fontSize:8,fontWeight:700,textTransform:"uppercase",letterSpacing:"0.1em",marginBottom:3,opacity:.8}}>{d===TODAY?"Today":dt.toLocaleDateString("en-NZ",{weekday:"short"})}</div>
                 <div style={{fontSize:22,fontWeight:900,lineHeight:1}}>{dt.getDate()}</div>
                 <div style={{fontSize:8,marginTop:3,opacity:.7}}>{dt.toLocaleDateString("en-NZ",{month:"short"})}</div>
@@ -1146,6 +1146,12 @@ export default function KGolfApp() {
           </div>
 
           {/* Legend */}
+          {selDate<TODAY&&(
+            <div style={{background:C.surface2,borderRadius:10,padding:"10px 16px",marginBottom:14,border:`1px solid ${C.border}`,display:"flex",alignItems:"center",gap:10}}>
+              <span style={{fontSize:15}}>📋</span>
+              <span style={{fontSize:12,color:C.textSub}}>Past date — <strong style={{color:C.white}}>view only</strong>. Bookings cannot be made for past dates.</span>
+            </div>
+          )}
           <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:14}}>
             <SectionLabel>Select Bay</SectionLabel>
             <div style={{display:"flex",gap:12}}>
@@ -1159,7 +1165,7 @@ export default function KGolfApp() {
               const free=bayFreeSlots(selDate,bay),pct=((SLOTS.length-free)/SLOTS.length)*100,full=free===0;
               const barCol=pct>75?C.red:pct>40?C.gold:C.lime;
               return (
-                <button key={bay} className="bay-btn" onClick={()=>{if(!full){setSelBay(bay);setSelSlots([]);setTabView("selectTime");}}} disabled={full}
+                <button key={bay} className="bay-btn" onClick={()=>{if(!full&&selDate>=TODAY){setSelBay(bay);setSelSlots([]);setTabView("selectTime");}}} disabled={full||selDate<TODAY}
                   style={{background:C.card,border:`1px solid ${C.border}`,borderRadius:14,padding:"18px 10px",cursor:full?"not-allowed":"pointer",textAlign:"center",transition:"all .2s",opacity:full?.4:1,boxShadow:C.shadowSm}}>
                   <div style={{fontSize:8,color:C.textMute,marginBottom:4,letterSpacing:"0.15em",textTransform:"uppercase",fontWeight:700}}>BAY</div>
                   <div style={{fontSize:32,fontWeight:900,color:C.lime,lineHeight:1,letterSpacing:"-0.02em"}}>{bay}</div>
