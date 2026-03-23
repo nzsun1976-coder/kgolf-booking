@@ -92,6 +92,7 @@ const SHOP_ADDRESS = "7/18 Link Drive, Wairau Valley, Auckland 0627";
 const SHOP_PHONE   = "09 440 9396";
 const SHOP_EMAIL   = "admin@kgolf.co.nz";
 const SHOP_URL     = "https://www.kgolf.co.nz/";
+const BOOKING_URL = "https://kgolf-booking.vercel.app";
 
 // Cancel 이메일 Template ID (EmailJS에서 두 번째 템플릿 만들고 등록)
 const EJ_TPL_CANCEL = import.meta.env.VITE_EMAILJS_CANCEL_TEMPLATE_ID ?? EJ_TPL;
@@ -122,7 +123,7 @@ async function sendCancellationEmail(bkg, allUsers) {
       shop_address:   SHOP_ADDRESS,
       shop_phone:     SHOP_PHONE,
       shop_email:     SHOP_EMAIL,
-      shop_url:       SHOP_URL,
+      shop_url: BOOKING_URL,
     }, EJ_KEY);
     console.log("[email] Cancellation sent to", bkg.userEmail);
   } catch(e) { console.error("[email] Cancellation failed:", e); }
@@ -163,7 +164,7 @@ async function sendChangeEmail(bkg, newDate, newSlots, allUsers) {
       shop_address:     SHOP_ADDRESS,
       shop_phone:       SHOP_PHONE,
       shop_email:       SHOP_EMAIL,
-      shop_url:         SHOP_URL,
+      shop_url: BOOKING_URL,
     }, EJ_KEY);
     console.log("[email] Change email sent to", toEmail);
   } catch(e) { console.error("[email] Change email failed:", e); }
