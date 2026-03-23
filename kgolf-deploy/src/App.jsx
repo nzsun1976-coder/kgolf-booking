@@ -209,8 +209,10 @@ const fmtDate   = (d) => d?new Date(d+"T12:00").toLocaleDateString("en-NZ",{week
 const fmtDateLng= (d) => d?new Date(d+"T12:00").toLocaleDateString("en-NZ",{weekday:"long",year:"numeric",month:"long",day:"numeric"}):"";
 // 과거 30일 + 오늘 + 미래 30일 = 총 61일
 const TODAY = new Date().toISOString().split("T")[0];
-const getDates = () => Array.from({length:61},(_,i)=>{ const d=new Date(); d.setDate(d.getDate()-30+i); return d.toISOString().split("T")[0]; });
-const DATES = getDates();
+// 유저용: 오늘 ~ 30일 후
+const DATES = Array.from({length:31},(_,i)=>{ const d=new Date(); d.setDate(d.getDate()+i); return d.toISOString().split("T")[0]; });
+// 어드민용: 30일 전 ~ 오늘 ~ 30일 후 (총 61일)
+const ADMIN_DATES = Array.from({length:61},(_,i)=>{ const d=new Date(); d.setDate(d.getDate()-30+i); return d.toISOString().split("T")[0]; });
 const SESSION_MS= 30*60*1000;
 const genMemberNo = (users) => `KG-${String(users.length+1).padStart(4,"0")}`;
 
@@ -708,7 +710,7 @@ function ChangeTimeModal({show,onClose,booking,onConfirm,busy}) {
       <div style={{marginBottom:16}}>
         <div style={{fontSize:10,color:C.textSub,fontWeight:700,letterSpacing:"0.12em",textTransform:"uppercase",marginBottom:8}}>Date</div>
         <select value={newDate} onChange={e=>setNewDate(e.target.value)} style={{width:"100%",padding:"11px 14px",background:C.surface2,border:`1px solid ${C.border}`,borderRadius:10,fontSize:14,outline:"none",fontFamily:"inherit",color:C.white}}>
-          {DATES.map((d)=><option key={d} value={d}>{d===TODAY?"Today":fmtDate(d)}</option>)}
+          {ADMIN_DATES.map((d)=><option key={d} value={d}>{d===TODAY?"Today":fmtDate(d)}</option>)}
         </select>
       </div>
       <div style={{marginBottom:16}}>
@@ -840,7 +842,7 @@ export default function KGolfApp() {
   const isSlotTaken=(date,bay,slot)=>bookings.some(b=>b.date===date&&b.bay===bay&&b.slots?.includes(slot)&&b.status==="confirmed");
   const getSlotBkg=(date,bay,slot)=>bookings.find(b=>b.date===date&&b.bay===bay&&b.slots?.includes(slot)&&b.status==="confirmed");
   const bayFreeSlots=(date,bay)=>{const t=new Set();bookings.filter(b=>b.date===date&&b.bay===bay&&b.status==="confirmed").forEach(b=>b.slots?.forEach(s=>t.add(s)));return SLOTS.length-t.size;};
-  const toggleSlot=(s)=>{if(selDate<TODAY){pop("Past dates are view only.","err");return;}if(isSlotTaken(selDate,selBay,s))return;const nx=selSlots.includes(s)?selSlots.filter(x=>x!==s):[...selSlots,s];if(!isConsec(nx)){pop("Please select consecutive time slots only.","err");return;}setSelSlots(nx);};
+  const toggleSlot=(s)=>{if(isSlotTaken(selDate,selBay,s))return;const nx=selSlots.includes(s)?selSlots.filter(x=>x!==s):[...selSlots,s];if(!isConsec(nx)){pop("Please select consecutive time slots only.","err");return;}setSelSlots(nx);};
 
   const doLogin=async()=>{
     if(busy) return;
@@ -1137,7 +1139,7 @@ export default function KGolfApp() {
           <div ref={el=>{if(el){const todayBtn=el.querySelector("[data-today]");if(todayBtn)todayBtn.scrollIntoView({inline:"center",behavior:"auto"});}}} style={{display:"flex",gap:8,overflowX:"auto",paddingBottom:8,marginBottom:24}}>
             {DATES.map((d,idx)=>{
               const dt=new Date(d+"T12:00"),sel=d===selDate;
-              return <button key={d} className="date-btn" onClick={()=>{setSelDate(d);setSelSlots([]);setSelBay(null);}} data-today={d===TODAY?"true":undefined} style={{flexShrink:0,padding:"11px 12px",borderRadius:12,background:sel?C.lime:C.card,border:`1px solid ${sel?C.lime:C.border}`,color:sel?"#030803":C.white,cursor:"pointer",textAlign:"center",minWidth:54,transition:"all .15s",boxShadow:sel?C.limeGlow:"none",opacity:d<TODAY?0.45:1}}>
+              return <button key={d} className="date-btn" onClick={()=>{setSelDate(d);setSelSlots([]);setSelBay(null);}} data-today={d===TODAY?"true":undefined} style={{flexShrink:0,padding:"11px 12px",borderRadius:12,background:sel?C.lime:C.card,border:`1px solid ${sel?C.lime:C.border}`,color:sel?"#030803":C.white,cursor:"pointer",textAlign:"center",minWidth:54,transition:"all .15s",boxShadow:sel?C.limeGlow:"none",opacity:1}}>
                 <div style={{fontSize:8,fontWeight:700,textTransform:"uppercase",letterSpacing:"0.1em",marginBottom:3,opacity:.8}}>{d===TODAY?"Today":dt.toLocaleDateString("en-NZ",{weekday:"short"})}</div>
                 <div style={{fontSize:22,fontWeight:900,lineHeight:1}}>{dt.getDate()}</div>
                 <div style={{fontSize:8,marginTop:3,opacity:.7}}>{dt.toLocaleDateString("en-NZ",{month:"short"})}</div>
@@ -1146,12 +1148,7 @@ export default function KGolfApp() {
           </div>
 
           {/* Legend */}
-          {selDate<TODAY&&(
-            <div style={{background:C.surface2,borderRadius:10,padding:"10px 16px",marginBottom:14,border:`1px solid ${C.border}`,display:"flex",alignItems:"center",gap:10}}>
-              <span style={{fontSize:15}}>📋</span>
-              <span style={{fontSize:12,color:C.textSub}}>Past date — <strong style={{color:C.white}}>view only</strong>. Bookings cannot be made for past dates.</span>
-            </div>
-          )}
+
           <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:14}}>
             <SectionLabel>Select Bay</SectionLabel>
             <div style={{display:"flex",gap:12}}>
@@ -1165,7 +1162,7 @@ export default function KGolfApp() {
               const free=bayFreeSlots(selDate,bay),pct=((SLOTS.length-free)/SLOTS.length)*100,full=free===0;
               const barCol=pct>75?C.red:pct>40?C.gold:C.lime;
               return (
-                <button key={bay} className="bay-btn" onClick={()=>{if(!full&&selDate>=TODAY){setSelBay(bay);setSelSlots([]);setTabView("selectTime");}}} disabled={full||selDate<TODAY}
+                <button key={bay} className="bay-btn" onClick={()=>{if(!full){setSelBay(bay);setSelSlots([]);setTabView("selectTime");}}} disabled={full}
                   style={{background:C.card,border:`1px solid ${C.border}`,borderRadius:14,padding:"18px 10px",cursor:full?"not-allowed":"pointer",textAlign:"center",transition:"all .2s",opacity:full?.4:1,boxShadow:C.shadowSm}}>
                   <div style={{fontSize:8,color:C.textMute,marginBottom:4,letterSpacing:"0.15em",textTransform:"uppercase",fontWeight:700}}>BAY</div>
                   <div style={{fontSize:32,fontWeight:900,color:C.lime,lineHeight:1,letterSpacing:"-0.02em"}}>{bay}</div>
@@ -1460,7 +1457,7 @@ export default function KGolfApp() {
         {/* TIMETABLE */}
         {ctrTab==="timetable"&&(<>
           <div style={{padding:"10px 20px",display:"flex",gap:8,overflowX:"auto",borderBottom:`1px solid ${C.border}`,background:C.surface}}>
-            {DATES.filter(d=>d>=new Date(new Date().setDate(new Date().getDate()-3)).toISOString().split("T")[0]).slice(0,10).map((d)=>(
+            {ADMIN_DATES.filter(d=>d>=new Date(new Date().setDate(new Date().getDate()-7)).toISOString().split("T")[0]&&d<=new Date(new Date().setDate(new Date().getDate()+14)).toISOString().split("T")[0]).map((d)=>(
               <button key={d} onClick={()=>setCtrDate(d)} style={{flexShrink:0,padding:"7px 14px",borderRadius:8,background:d===ctrDate?C.lime:C.surface2,border:`1px solid ${d===ctrDate?C.lime:C.border}`,color:d===ctrDate?"#030803":C.white,cursor:"pointer",fontWeight:700,fontSize:11,letterSpacing:"0.05em",boxShadow:d===ctrDate?C.limeGlowSm:"none",transition:"all .15s"}}>
                 {d===TODAY?"Today":fmtDate(d)}
               </button>
