@@ -713,7 +713,7 @@ function ChangeTimeModal({show,onClose,booking,onConfirm,busy}) {
       <div style={{marginBottom:16}}>
         <div style={{fontSize:10,color:C.textSub,fontWeight:700,letterSpacing:"0.12em",textTransform:"uppercase",marginBottom:8}}>Date</div>
         <select value={newDate} onChange={e=>setNewDate(e.target.value)} style={{width:"100%",padding:"11px 14px",background:C.surface2,border:`1px solid ${C.border}`,borderRadius:10,fontSize:14,outline:"none",fontFamily:"inherit",color:C.white}}>
-          {ADMIN_DATES.map((d)=><option key={d} value={d}>{d===TODAY?"Today":fmtDate(d)}</option>)}
+          {ADMIN_DATES.filter(d=>d>=TODAY).map((d)=><option key={d} value={d}>{d===TODAY?"Today":fmtDate(d)}</option>)}
         </select>
       </div>
       <div style={{marginBottom:16}}>
