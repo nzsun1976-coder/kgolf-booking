@@ -88,10 +88,10 @@ const EJ_TPL = import.meta.env.VITE_EMAILJS_TEMPLATE_ID ?? "";
 const EJ_KEY = import.meta.env.VITE_EMAILJS_PUBLIC_KEY ?? "";
 
 const SHOP_NAME    = "KGolf Screen Golf New Zealand";
-const SHOP_ADDRESS = "Cnr Stoddard Rd & Maioro St, Mt Roskill, Auckland 1041";
+const SHOP_ADDRESS = "7/18 Link Drive, Wairau Valley, Auckland 0627";
 const SHOP_PHONE   = "+64 9 XXX XXXX";
-const SHOP_EMAIL   = "info@kgolf.nz";
-const SHOP_URL     = "https://kgolf-booking.vercel.app";
+const SHOP_EMAIL   = "admin@kgolf.co.nz";
+const SHOP_URL     = "https://www.kgolf.co.nz/";
 
 async function sendConfirmationEmail(bkg, allUsers) {
   if (!EJ_KEY || !EJ_SVC || !EJ_TPL) { console.warn("[email] EmailJS not configured"); return; }
