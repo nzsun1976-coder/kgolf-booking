@@ -12,16 +12,16 @@ import { initializeApp } from "firebase/app";
 import { getFirestore, doc, setDoc, onSnapshot, getDoc } from "firebase/firestore";
 
 const firebaseConfig = {
-  apiKey: "AIzaSyDBRCKA-yd7oUr19_UiIP6TT1ObJ52DQ88",
+  apiKey: "AIzaSyDBRCKA-yd7oUr19_UiIP6TTlObJ52DQ08",
   authDomain: "kgolf-booking-b909e.firebaseapp.com",
   projectId: "kgolf-booking-b909e",
   storageBucket: "kgolf-booking-b909e.firebasestorage.app",
   messagingSenderId: "165994639150",
   appId: "1:165994639150:web:7285f0502f3639185654bf"
 };
-
 const firebaseApp = initializeApp(firebaseConfig);
 const db = getFirestore(firebaseApp);
+
 // ─── Crypto ───────────────────────────────────────────────
 const PBKDF2_ITER = 100_000;
 async function hashPassword(password, salt) {
@@ -33,11 +33,14 @@ async function hashPassword(password, salt) {
 function generateSalt() { const a=new Uint8Array(16); crypto.getRandomValues(a); return Array.from(a).map(b=>b.toString(16).padStart(2,"0")).join(""); }
 
 // ─── Sanitization ─────────────────────────────────────────
+// sanitize: 저장할 때 사용 (trim 포함)
 const sanitize = (v,max=300) => String(v??"").replace(/[\x00-\x1F\x7F<>"'`&;\\]/g,"").replace(/\.\./g,"").trim().slice(0,max);
+// sanitizeInput: 입력 중 사용 (trim 없음 → 스페이스 입력 가능)
+const sanitizeInput = (v,max=300) => String(v??"").replace(/[\x00-\x1F\x7F<>"'`&;\\]/g,"").replace(/\.\./g,"").slice(0,max);
 const sanitizeEmail = (v) => String(v??"").toLowerCase().replace(/[^a-z0-9@._+-]/g,"").trim().slice(0,254);
 const validateEmail = (e) => /^[^\s@]+@[^\s@]{1,63}\.[^\s@]{2,}$/.test(e);
 const validatePassword = (p) => p.length>=8 && p.length<=128;
-const validateName = (n) => n.length>=2 && n.length<=80;
+const validateName = (n) => n.trim().length>=2 && n.trim().length<=80;
 const genericErr = () => "Something went wrong. Please try again.";
 
 // ─── Rate Limit ────────────────────────────────────────────
@@ -61,6 +64,53 @@ async function auditLog(action, meta={}) {
 const ADMIN_EMAIL = "admin@kgolf.nz";
 const ADMIN_SALT  = "kgolf-admin-salt-2024";
 const ADMIN_HASH  = import.meta.env.VITE_ADMIN_HASH ?? "__REPLACE_IN_PRODUCTION__";
+
+// ═══════════════════════════════════════════════════════
+//  EMAIL — EmailJS (https://www.emailjs.com)
+//  Vercel 환경변수에 아래 3가지 추가 필요:
+//  VITE_EMAILJS_SERVICE_ID, VITE_EMAILJS_TEMPLATE_ID, VITE_EMAILJS_PUBLIC_KEY
+// ═══════════════════════════════════════════════════════
+const EJ_SVC = import.meta.env.VITE_EMAILJS_SERVICE_ID ?? "";
+const EJ_TPL = import.meta.env.VITE_EMAILJS_TEMPLATE_ID ?? "";
+const EJ_KEY = import.meta.env.VITE_EMAILJS_PUBLIC_KEY ?? "";
+
+const SHOP_NAME    = "KGolf Screen Golf New Zealand";
+const SHOP_ADDRESS = "Cnr Stoddard Rd & Maioro St, Mt Roskill, Auckland 1041";
+const SHOP_PHONE   = "+64 9 XXX XXXX";
+const SHOP_EMAIL   = "info@kgolf.nz";
+const SHOP_URL     = "https://kgolf-booking.vercel.app";
+
+async function sendConfirmationEmail(bkg, allUsers) {
+  if (!EJ_KEY || !EJ_SVC || !EJ_TPL) return; // 설정 안됐으면 skip
+  if (!bkg.userEmail) return;                   // 이메일 없으면 skip
+  try {
+    const sorted = [...(bkg.slots||[])].sort((a,b)=>slotIdx(a)-slotIdx(b));
+    const member = allUsers.find(u=>u.id===bkg.userId);
+    // EmailJS 동적 로드 (번들 크기 절약)
+    const ejLib = await import("https://cdn.jsdelivr.net/npm/@emailjs/browser@4/dist/email.min.js")
+      .catch(()=>null);
+    const ej = ejLib?.default ?? window.emailjs;
+    if (!ej) return;
+    await ej.send(EJ_SVC, EJ_TPL, {
+      to_email:     bkg.userEmail,
+      to_name:      sanitize(bkg.userName),
+      booking_ref:  "#" + bkg.id.slice(-8).toUpperCase(),
+      member_no:    member?.memberNo || "Walk-in",
+      bay:          `Bay ${bkg.bay}`,
+      date:         fmtDateLng(bkg.date),
+      start_time:   sorted[0] || "",
+      end_time:     sorted.length>0 ? slotEnd(sorted[sorted.length-1]) : "",
+      duration:     totalDur(bkg.slots||[]),
+      slots_count:  String(bkg.slots?.length||0),
+      shop_name:    SHOP_NAME,
+      shop_address: SHOP_ADDRESS,
+      shop_phone:   SHOP_PHONE,
+      shop_email:   SHOP_EMAIL,
+      shop_url:     SHOP_URL,
+      cancel_url:   SHOP_URL,
+    }, EJ_KEY);
+  } catch(e) { console.error("[email]", e); }
+}
 
 // ─── Time slots ────────────────────────────────────────────
 const NUM_BAYS=11, OPEN_H=9, CLOSE_H=23;
@@ -198,7 +248,7 @@ function Inp({label,value,onChange,type="text",placeholder="",req,maxLen=300,hin
     <div style={{marginBottom:16}}>
       {label && <div style={{color:C.textSub,fontSize:10,fontWeight:700,letterSpacing:"0.12em",textTransform:"uppercase",marginBottom:7}}>{label}{req&&<span style={{color:C.lime}}> *</span>}</div>}
       <input type={type} value={value} autoFocus={autoFocus}
-        onChange={e=>onChange(type==="email"?sanitizeEmail(e.target.value):sanitize(e.target.value,maxLen))}
+        onChange={e=>onChange(type==="email"?sanitizeEmail(e.target.value):sanitizeInput(e.target.value,maxLen))}
         placeholder={placeholder} maxLength={maxLen}
         onFocus={()=>setFocus(true)} onBlur={()=>setFocus(false)}
         style={{width:"100%",padding:"12px 16px",background:focus?C.surface2:C.card,border:`1px solid ${focus?C.borderBright:C.border}`,borderRadius:10,color:C.white,fontSize:14,outline:"none",boxSizing:"border-box",transition:"all .18s",boxShadow:focus?C.limeGlowSm:"none",fontFamily:"inherit"}}/>
@@ -492,8 +542,8 @@ const BookingModal = memo(function BookingModal({show,onClose,bay,slots,date,reg
       {mode==="walkin"&&(
         <div>
           {/* Walk-in 모드 — 이름 필드에만 포커스 */}
-          <Inp req label="Customer Name" value={walkName} onChange={setWalkName} placeholder="John Smith" maxLen={80} autoFocus/>
-          <Inp label="Phone Number" value={walkPhone} onChange={setWalkPhone} placeholder="+64 21 xxx xxxx" maxLen={30}/>
+          <Inp req label="Customer Name" value={walkName} onChange={v=>setWalkName(sanitizeInput(v,80))} placeholder="John Smith" maxLen={80} autoFocus/>
+          <Inp label="Phone Number" value={walkPhone} onChange={v=>setWalkPhone(sanitizeInput(v,30))} placeholder="+64 21 xxx xxxx" maxLen={30}/>
         </div>
       )}
       <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10,marginTop:4}}>
@@ -599,6 +649,42 @@ function ChangeTimeModal({show,onClose,booking,onConfirm,busy}) {
 }
 
 // ════════════════════════════════════════════════════════
+//  EDIT MEMBER MODAL — 전체 프로필 편집 (어드민)
+// ════════════════════════════════════════════════════════
+function EditMemberModal({show,onClose,member,onSave,busy}) {
+  const [form,setForm] = useState({name:"",nick:"",email:"",phone:"",address:"",memberNo:""});
+  useEffect(()=>{
+    if(show&&member) setForm({name:member.name||"",nick:member.nick||"",email:member.email||"",phone:member.phone||"",address:member.address||"",memberNo:member.memberNo||""});
+  },[show,member]);
+  const set = (k,v) => setForm(p=>({...p,[k]:v}));
+  return (
+    <Modal show={show} onClose={onClose} title="Edit Member Profile">
+      {/* Member badge */}
+      <div style={{display:"flex",alignItems:"center",gap:12,padding:"12px 16px",background:C.surface2,borderRadius:10,marginBottom:18,border:`1px solid ${C.border}`}}>
+        <div style={{width:42,height:42,borderRadius:12,background:C.limeDim,border:`1px solid ${C.borderMd}`,display:"flex",alignItems:"center",justifyContent:"center",fontSize:18,fontWeight:900,color:C.lime,flexShrink:0}}>
+          {(form.nick||form.name||"?")[0].toUpperCase()}
+        </div>
+        <div>
+          <div style={{fontSize:14,fontWeight:800,color:C.white}}>{form.name||"—"}</div>
+          {member?.memberNo&&<div style={{fontSize:11,color:C.blue,fontWeight:700,marginTop:2}}>{member.memberNo}</div>}
+          {member?.walkin&&<Tag color={C.gold}>Walk-in member</Tag>}
+        </div>
+      </div>
+      <Inp label="Member Number" value={form.memberNo} onChange={v=>set("memberNo",sanitizeInput(v,20))} placeholder="KG-0001" maxLen={20}/>
+      <Inp req label="Full Name" value={form.name} onChange={v=>set("name",sanitizeInput(v,80))} placeholder="John Smith" maxLen={80}/>
+      <Inp label="Nickname" value={form.nick} onChange={v=>set("nick",sanitizeInput(v,40))} placeholder="@GolfKing" maxLen={40}/>
+      <Inp label="Email" value={form.email} onChange={v=>set("email",v)} type="email" placeholder="john@example.com"/>
+      <Inp label="Phone" value={form.phone} onChange={v=>set("phone",sanitizeInput(v,30))} placeholder="+64 21 xxx xxxx" maxLen={30}/>
+      <Inp label="Address" value={form.address} onChange={v=>set("address",sanitizeInput(v,200))} placeholder="Auckland, NZ" maxLen={200}/>
+      <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10,marginTop:4}}>
+        <Btn full v="dark" onClick={onClose}>Cancel</Btn>
+        <Btn full v="primary" onClick={()=>onSave(member,form)} disabled={busy||!form.name.trim()}>{busy?"Saving…":"Save Changes"}</Btn>
+      </div>
+    </Modal>
+  );
+}
+
+// ════════════════════════════════════════════════════════
 //  MAIN APP
 // ════════════════════════════════════════════════════════
 export default function KGolfApp() {
@@ -628,6 +714,7 @@ export default function KGolfApp() {
   const [userSearch,setUserSearch]   = useState("");
   const [statsFilter,setStatsFilter] = useState(null);
   const [editMemberNo,setEditMemberNo]=useState(null);
+  const [editMember,setEditMember]   = useState(null); // 전체 프로필 편집
 
   const [lf,setLf] = useState({email:"",pass:""});
   const [rf,setRf] = useState({name:"",nick:"",email:"",phone:"",address:"",pass:"",passConfirm:""});
@@ -720,14 +807,71 @@ export default function KGolfApp() {
     for(const s of selSlots) if(isSlotTaken(selDate,selBay,s)){pop("A slot was just taken. Please re-select.","err");setTabView("home");setSelSlots([]);return;}
     const sorted=[...selSlots].sort((a,b)=>slotIdx(a)-slotIdx(b));
     setBusy(true);
-    try{const bkg={id:Date.now().toString(),userId:user.id,userName:sanitize(user.name),userNick:sanitize(user.nick||""),userPhone:sanitize(user.phone||""),userEmail:sanitizeEmail(user.email),bay:selBay,date:selDate,slots:sorted,status:"confirmed",createdAt:new Date().toISOString(),adminCreated:false};await saveBkgs([...bookings,bkg]);await auditLog("BOOKING_CREATED",{userId:user.id,bay:selBay,date:selDate});setLastBkg(bkg);setNewBkg(true);setTabView("confirmed");pop(`Bay ${selBay} booked — ${totalDur(sorted)}`);}catch(e){console.error(e);pop(genericErr(),"err");}
+    try{
+      const bkg={id:Date.now().toString(),userId:user.id,userName:sanitize(user.name),userNick:sanitize(user.nick||""),userPhone:sanitize(user.phone||""),userEmail:sanitizeEmail(user.email),bay:selBay,date:selDate,slots:sorted,status:"confirmed",createdAt:new Date().toISOString(),adminCreated:false};
+      await saveBkgs([...bookings,bkg]);
+      await auditLog("BOOKING_CREATED",{userId:user.id,bay:selBay,date:selDate});
+      // 확인 이메일 발송 (비동기 — 실패해도 예약은 유지)
+      sendConfirmationEmail(bkg, regUsers).catch(e=>console.error("[email]",e));
+      setLastBkg(bkg);setNewBkg(true);setTabView("confirmed");
+      pop(`Bay ${selBay} booked — ${totalDur(sorted)}`);
+    }catch(e){console.error(e);pop(genericErr(),"err");}
     finally{setBusy(false);}
   };
 
   const doCancel=async(id)=>{setBusy(true);try{await saveBkgs(bookings.map(b=>b.id===id?{...b,status:"cancelled"}:b));await auditLog("BOOKING_CANCELLED",{id,by:user?.email||"admin"});pop("Booking cancelled.");}catch(e){console.error(e);pop(genericErr(),"err");}finally{setBusy(false);};};
-  const doAdminBook=async(bay,slots,memberInfo)=>{setBusy(true);try{const bkg={id:Date.now().toString(),...memberInfo,bay,date:ctrDate,slots,status:"confirmed",adminCreated:true,createdAt:new Date().toISOString()};await saveBkgs([...bookings,bkg]);await auditLog("ADMIN_BOOKING",{bay,date:ctrDate,user:memberInfo.userName});setBookModal({show:false,bay:null,slots:[]});pop(`Bay ${bay} · ${slots[0]}–${slotEnd(slots[slots.length-1])} — ${sanitize(memberInfo.userName)}`);}catch(e){console.error(e);pop(genericErr(),"err");}finally{setBusy(false);};};
+  const doAdminBook=async(bay,slots,memberInfo)=>{
+    setBusy(true);
+    try{
+      const bkg={id:Date.now().toString(),...memberInfo,bay,date:ctrDate,slots,status:"confirmed",adminCreated:true,createdAt:new Date().toISOString()};
+      const updatedBkgs=[...bookings,bkg];
+      await saveBkgs(updatedBkgs);
+      // Walk-in이면 멤버로 자동 등록
+      let finalUsers=regUsers;
+      if(memberInfo.userId?.startsWith("walkin_")){
+        const exists=regUsers.find(u=>sanitize(u.name).toLowerCase()===sanitize(memberInfo.userName).toLowerCase());
+        if(!exists){
+          const memberNo=genMemberNo(regUsers);
+          const nm={id:memberInfo.userId,name:sanitize(memberInfo.userName),nick:"",email:"",phone:sanitize(memberInfo.userPhone||""),address:"",memberNo,walkin:true,createdAt:new Date().toISOString()};
+          finalUsers=[...regUsers,nm];
+          await saveUsrs(finalUsers);
+        }
+      }
+      await auditLog("ADMIN_BOOKING",{bay,date:ctrDate,user:memberInfo.userName});
+      if(memberInfo.userEmail){
+        sendConfirmationEmail(bkg,finalUsers).catch(e=>console.error("[email]",e));
+      }
+      setBookModal({show:false,bay:null,slots:[]});
+      pop(`Bay ${bay} · ${slots[0]}–${slotEnd(slots[slots.length-1])} — ${sanitize(memberInfo.userName)}`);
+    }catch(e){console.error(e);pop(genericErr(),"err");}
+    finally{setBusy(false);}
+  };
   const doChangeTime=async(booking,newDate,newSlots)=>{setBusy(true);try{for(const s of newSlots)if(bookings.some(b=>b.id!==booking.id&&b.date===newDate&&b.bay===booking.bay&&b.slots?.includes(s)&&b.status==="confirmed")){pop("Some of those slots are already taken!","err");return;}await saveBkgs(bookings.map(b=>b.id===booking.id?{...b,date:newDate,slots:newSlots}:b));await auditLog("BOOKING_CHANGED",{id:booking.id});setChangeModal({show:false,booking:null});pop("Booking updated.");}catch(e){console.error(e);pop(genericErr(),"err");}finally{setBusy(false);};};
   const saveEditMemberNo=async()=>{if(!editMemberNo)return;const val=sanitize(editMemberNo.val,20);if(!val){pop("Member number cannot be empty.","err");return;}if(regUsers.some(u=>u.id!==editMemberNo.id&&u.memberNo===val)){pop("That member number is already in use.","err");return;}await saveUsrs(regUsers.map(u=>u.id===editMemberNo.id?{...u,memberNo:val}:u));setEditMemberNo(null);pop("Member number updated.");};
+
+  // 전체 멤버 프로필 저장
+  const saveEditMember=async(member,form)=>{
+    if(!form.name.trim()){pop("Name is required.","err");return;}
+    const val=sanitize(form.memberNo,20);
+    if(val&&regUsers.some(u=>u.id!==member.id&&u.memberNo===val)){pop("That member number is already in use.","err");return;}
+    setBusy(true);
+    try{
+      await saveUsrs(regUsers.map(u=>u.id===member.id?{
+        ...u,
+        name:    sanitize(form.name,80),
+        nick:    sanitize(form.nick,40),
+        email:   sanitizeEmail(form.email),
+        phone:   sanitize(form.phone,30),
+        address: sanitize(form.address,200),
+        memberNo:val||u.memberNo||"",
+        walkin:  undefined,   // 정식 등록되면 walk-in 플래그 제거
+      }:u));
+      await auditLog("MEMBER_UPDATED",{id:member.id,by:"admin"});
+      setEditMember(null);
+      pop("Member profile updated. ✅");
+    }catch(e){console.error(e);pop(genericErr(),"err");}
+    finally{setBusy(false);}
+  };
   const doDeleteUser=async(uid)=>{if(!window.confirm("Delete this user?"))return;setBusy(true);try{await saveUsrs(regUsers.filter(u=>u.id!==uid));await auditLog("USER_DELETED",{uid,by:"admin"});pop("User deleted.");}catch(e){console.error(e);pop(genericErr(),"err");}finally{setBusy(false);};};
   const doLogout=async(role="user")=>{await auditLog("LOGOUT",{email:user?.email||"admin",role});setUser(null);setIsAdmin(false);setSelSlots([]);setSelBay(null);setView("login");};
 
@@ -1136,6 +1280,7 @@ export default function KGolfApp() {
         <BookingModal show={bookModal.show} onClose={()=>setBookModal({show:false,bay:null,slots:[]})} bay={bookModal.bay} slots={bookModal.slots} date={ctrDate} regUsers={regUsers} onConfirm={doAdminBook} busy={busy}/>
         {ctxMenu&&<ContextMenu menu={ctxMenu} onClose={()=>setCtxMenu(null)} onCancel={()=>doCancel(ctxMenu.booking.id)} onViewInfo={()=>setInfoModal({show:true,booking:ctxMenu.booking})} onChangeTime={()=>setChangeModal({show:true,booking:ctxMenu.booking})}/>}
         <MemberInfoModal show={infoModal.show} onClose={()=>setInfoModal({show:false,booking:null})} booking={infoModal.booking} regUsers={regUsers}/>
+        <EditMemberModal show={!!editMember} onClose={()=>setEditMember(null)} member={editMember} onSave={saveEditMember} busy={busy}/>
         <ChangeTimeModal show={changeModal.show} onClose={()=>setChangeModal({show:false,booking:null})} booking={changeModal.booking} onConfirm={doChangeTime} busy={busy}/>
 
         {/* Admin header */}
@@ -1273,39 +1418,34 @@ export default function KGolfApp() {
               {filteredUsers.length===0?<div style={{padding:"40px 20px",textAlign:"center",color:C.textMute}}>No members found</div>
               :filteredUsers.map((u,idx)=>{
                 const ub=bookings.filter(b=>b.userId===u.id&&b.status==="confirmed").length;
-                const isEditingNo=editMemberNo?.id===u.id;
-                return <div key={u.id} className="user-row" style={{display:"flex",alignItems:"center",gap:14,padding:"14px 18px",borderBottom:idx<filteredUsers.length-1?`1px solid ${C.border}`:"none",transition:"background .15s"}}>
-                  <div style={{width:42,height:42,borderRadius:12,background:C.limeDim,border:`1px solid ${C.borderMd}`,display:"flex",alignItems:"center",justifyContent:"center",fontSize:17,fontWeight:900,color:C.lime,flexShrink:0}}>
-                    {(u.nick||u.name||"?")[0].toUpperCase()}
-                  </div>
-                  <div style={{flex:1,minWidth:0}}>
-                    <div style={{display:"flex",alignItems:"center",gap:8,flexWrap:"wrap",marginBottom:4}}>
-                      <span style={{fontWeight:800,fontSize:14,color:C.white}}>{sanitize(u.name)}</span>
-                      {u.nick&&<Tag color={C.lime}>{sanitize(u.nick)}</Tag>}
-                      {ub>0&&<Tag color={C.gold}>{ub} booking{ub>1?"s":""}</Tag>}
+                return (
+                  <div key={u.id} className="user-row" style={{display:"flex",alignItems:"center",gap:14,padding:"14px 18px",borderBottom:idx<filteredUsers.length-1?`1px solid ${C.border}`:"none",transition:"background .15s"}}>
+                    {/* Avatar */}
+                    <div style={{width:44,height:44,borderRadius:12,background:u.walkin?C.goldDim:C.limeDim,border:`1px solid ${u.walkin?C.gold:C.borderMd}`,display:"flex",alignItems:"center",justifyContent:"center",fontSize:17,fontWeight:900,color:u.walkin?C.gold:C.lime,flexShrink:0}}>
+                      {(u.nick||u.name||"?")[0].toUpperCase()}
                     </div>
-                    {/* Editable member number */}
-                    <div style={{display:"flex",alignItems:"center",gap:6,marginBottom:4}}>
-                      {isEditingNo?(
-                        <>
-                          <input value={editMemberNo.val} onChange={e=>setEditMemberNo(p=>({...p,val:sanitize(e.target.value,20)}))}
-                            autoFocus onKeyDown={e=>{if(e.key==="Enter")saveEditMemberNo();if(e.key==="Escape")setEditMemberNo(null);}}
-                            style={{width:90,padding:"3px 8px",background:C.surface2,border:`1px solid ${C.lime}`,borderRadius:6,fontSize:11,fontFamily:"inherit",outline:"none",color:C.white}}/>
-                          <button onClick={saveEditMemberNo} style={{background:C.lime,border:"none",color:"#030803",borderRadius:5,padding:"3px 8px",cursor:"pointer",fontSize:11,fontWeight:700}}>✓</button>
-                          <button onClick={()=>setEditMemberNo(null)} style={{background:C.surface2,border:`1px solid ${C.border}`,color:C.textSub,borderRadius:5,padding:"3px 8px",cursor:"pointer",fontSize:11}}>✕</button>
-                        </>
-                      ):(
-                        <div style={{display:"flex",alignItems:"center",gap:6,cursor:"pointer"}} onClick={()=>setEditMemberNo({id:u.id,val:u.memberNo||genMemberNo(regUsers)})}>
-                          <Tag color={C.blue}>{u.memberNo||"No #"}</Tag>
-                          <span style={{fontSize:10,color:C.textMute}}>✏️</span>
-                        </div>
-                      )}
+                    {/* Info */}
+                    <div style={{flex:1,minWidth:0}}>
+                      <div style={{display:"flex",alignItems:"center",gap:7,flexWrap:"wrap",marginBottom:4}}>
+                        <span style={{fontWeight:800,fontSize:14,color:C.white}}>{sanitize(u.name)}</span>
+                        <Tag color={C.blue}>{u.memberNo||"No #"}</Tag>
+                        {u.walkin&&<Tag color={C.gold}>Walk-in</Tag>}
+                        {u.nick&&<Tag color={C.lime}>{sanitize(u.nick)}</Tag>}
+                        {ub>0&&<Tag color={C.gold}>{ub} booking{ub>1?"s":""}</Tag>}
+                      </div>
+                      <div style={{fontSize:11,color:C.textMute}}>{u.email||<span style={{color:C.textMute,fontStyle:"italic"}}>no email</span>}</div>
+                      <div style={{fontSize:11,color:C.textMute,marginTop:1}}>
+                        {u.phone&&<span>{sanitize(u.phone)}</span>}
+                        {u.address&&<span style={{marginLeft:8}}>· {sanitize(u.address)}</span>}
+                      </div>
                     </div>
-                    <div style={{fontSize:11,color:C.textMute}}>{u.email}</div>
-                    <div style={{fontSize:11,color:C.textMute,marginTop:1}}>{u.phone&&<span>{sanitize(u.phone)}</span>}{u.address&&<span style={{marginLeft:8}}>· {sanitize(u.address)}</span>}</div>
+                    {/* Actions */}
+                    <div style={{display:"flex",flexDirection:"column",gap:6,flexShrink:0}}>
+                      <button onClick={()=>setEditMember(u)} style={{background:C.limeDim,border:`1px solid ${C.borderMd}`,color:C.lime,borderRadius:7,padding:"5px 10px",cursor:"pointer",fontSize:11,fontWeight:700}}>Edit</button>
+                      <button onClick={()=>doDeleteUser(u.id)} disabled={busy} style={{background:C.redDim,border:`1px solid ${C.red}44`,color:C.red,borderRadius:7,padding:"5px 10px",cursor:"pointer",fontSize:11,fontWeight:700}}>Delete</button>
+                    </div>
                   </div>
-                  <button onClick={()=>doDeleteUser(u.id)} disabled={busy} style={{background:C.redDim,border:`1px solid ${C.red}44`,color:C.red,borderRadius:8,padding:"5px 10px",cursor:"pointer",fontSize:11,fontWeight:700,flexShrink:0}}>Delete</button>
-                </div>;
+                );
               })}
             </div>
           </div>
