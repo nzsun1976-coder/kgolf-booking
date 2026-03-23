@@ -129,14 +129,15 @@ async function sendCancellationEmail(bkg, allUsers) {
 }
 
 // 날짜/시간 변경 이메일 Template ID
-const EJ_TPL_CHANGE = import.meta.env.VITE_EMAILJS_CHANGE_TEMPLATE_ID ?? EJ_TPL;
+// 취소/변경 모두 같은 템플릿 사용 (EmailJS 무료플랜 템플릿 2개 제한 대응)
 
 async function sendChangeEmail(bkg, newDate, newSlots, allUsers) {
   if (!EJ_KEY || !EJ_SVC) return;
   const member = allUsers.find(u=>u.id===bkg.userId);
   const toEmail = bkg.userEmail || member?.email || "";
   if (!toEmail) { console.warn("[email] No email for change notification:", bkg.userName); return; }
-  const tpl = EJ_TPL_CHANGE || EJ_TPL;
+  // 취소 템플릿 재사용 (무료플랜 2개 제한 대응)
+  const tpl = EJ_TPL_CANCEL || EJ_TPL;
   if (!tpl) return;
   try {
     const sorted = [...newSlots].sort((a,b)=>slotIdx(a)-slotIdx(b));
@@ -147,12 +148,13 @@ async function sendChangeEmail(bkg, newDate, newSlots, allUsers) {
       booking_ref:      "#" + bkg.id.slice(-8).toUpperCase(),
       member_no:        member?.memberNo ? member.memberNo : (bkg.userId?.startsWith("walkin_") ? "Walk-in Member" : "—"),
       bay:              `Bay ${bkg.bay}`,
-      // 새 날짜/시간
-      new_date:         fmtDateLng(newDate),
-      new_start_time:   sorted[0] || "",
-      new_end_time:     sorted.length>0 ? slotEnd(sorted[sorted.length-1]) : "",
-      new_duration:     totalDur(newSlots),
-      // 이전 날짜/시간
+      email_type:       "Updated",
+      // 새 날짜/시간 (변경 후)
+      date:             fmtDateLng(newDate),
+      start_time:       sorted[0] || "",
+      end_time:         sorted.length>0 ? slotEnd(sorted[sorted.length-1]) : "",
+      duration:         totalDur(newSlots),
+      // 이전 날짜/시간 (변경 전) — 템플릿에서 표시 가능
       old_date:         fmtDateLng(bkg.date),
       old_start_time:   oldSorted[0] || "",
       old_end_time:     oldSorted.length>0 ? slotEnd(oldSorted[oldSorted.length-1]) : "",
@@ -163,7 +165,7 @@ async function sendChangeEmail(bkg, newDate, newSlots, allUsers) {
       shop_email:       SHOP_EMAIL,
       shop_url:         SHOP_URL,
     }, EJ_KEY);
-    console.log("[email] Change email sent to", bkg.userEmail);
+    console.log("[email] Change email sent to", toEmail);
   } catch(e) { console.error("[email] Change email failed:", e); }
 }
 
