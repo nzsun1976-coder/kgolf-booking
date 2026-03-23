@@ -1457,7 +1457,7 @@ export default function KGolfApp() {
         {/* TIMETABLE */}
         {ctrTab==="timetable"&&(<>
           <div style={{padding:"10px 20px",display:"flex",gap:8,overflowX:"auto",borderBottom:`1px solid ${C.border}`,background:C.surface}}>
-            {ADMIN_DATES.filter(d=>d>=new Date(new Date().setDate(new Date().getDate()-7)).toISOString().split("T")[0]&&d<=new Date(new Date().setDate(new Date().getDate()+14)).toISOString().split("T")[0]).map((d)=>(
+            {ADMIN_DATES.filter(d=>d>=new Date(new Date().setDate(new Date().getDate()-28)).toISOString().split("T")[0]&&d<=new Date(new Date().setDate(new Date().getDate()+28)).toISOString().split("T")[0]).map((d)=>(
               <button key={d} onClick={()=>setCtrDate(d)} style={{flexShrink:0,padding:"7px 14px",borderRadius:8,background:d===ctrDate?C.lime:C.surface2,border:`1px solid ${d===ctrDate?C.lime:C.border}`,color:d===ctrDate?"#030803":C.white,cursor:"pointer",fontWeight:700,fontSize:11,letterSpacing:"0.05em",boxShadow:d===ctrDate?C.limeGlowSm:"none",transition:"all .15s"}}>
                 {d===TODAY?"Today":fmtDate(d)}
               </button>
