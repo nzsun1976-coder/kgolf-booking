@@ -1482,6 +1482,8 @@ export default function KGolfApp() {
       return (
         <div style={{minHeight:"100vh",background:C.bg}}>
           <style>{CSS}</style><Toast toast={toast}/>
+          {/* 유저용 날짜/시간 변경 모달 */}
+          <ChangeTimeModal show={changeModal.show} onClose={()=>setChangeModal({show:false,booking:null})} booking={changeModal.booking} onConfirm={doChangeTime} busy={busy}/>
           <Header subtitle="Your reservations"/>
           <div style={{maxWidth:500,margin:"0 auto",padding:"20px 16px",animation:"fadeUp .35s ease"}}>
             <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-end",marginBottom:22}}>
@@ -1511,7 +1513,10 @@ export default function KGolfApp() {
                       </div>
                       <div style={{display:"flex",justifyContent:"space-between",alignItems:"center"}}>
                         <div style={{fontSize:10,color:C.textMute,fontFamily:"monospace"}}>#{b.id?.slice(-8).toUpperCase()}</div>
-                        <Btn v="danger" sz="sm" onClick={()=>doCancel(b.id)} disabled={busy}>Cancel</Btn>
+                        <div style={{display:"flex",gap:8}}>
+                          <Btn v="ghost" sz="sm" onClick={()=>setChangeModal({show:true,booking:b})} disabled={busy}>🕐 Change</Btn>
+                          <Btn v="danger" sz="sm" onClick={()=>doCancel(b.id)} disabled={busy}>Cancel</Btn>
+                        </div>
                       </div>
                     </div>
                   );})}
