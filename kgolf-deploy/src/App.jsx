@@ -879,7 +879,7 @@ export default function KGolfApp() {
     finally{setBusy(false);}
   };
 
-  const doForgotStep1=()=>{const email=sanitizeEmail(forgotEmail);if(!validateEmail(email)){pop("Please enter a valid email.","err");return;}const u=regUsers.find(u=>sanitizeEmail(u.email)===email);if(!u){pop("If that email is registered, you can now set a new password.");setShowForgot(false);setForgotEmail("");return;}  
+  const doForgotStep1=()=>{const email=sanitizeEmail(forgotEmail);if(!validateEmail(email)){pop("Please enter a valid email.","err");return;}const u=regUsers.find(u=>sanitizeEmail(u.email)===email);if(!u){pop("If that email is registered, you can now set a new password.");setShowForgot(false);setForgotEmail("");return;} setForgotUser(u);setForgotStep(2);}; 
   const doForgotStep2=async()=>{if(!forgotUser){pop("Please go back.","err");return;}if(!validatePassword(forgotNew)){pop("Password must be 8–128 characters.","err");return;}setBusy(true);try{const salt=generateSalt(),passHash=await hashPassword(forgotNew,salt);await saveUsrs(regUsers.map(u=>u.id===forgotUser.id?{...u,salt,passHash,pass:undefined}:u));await auditLog("PASS_RESET",{email:forgotUser.email});pop("Password updated. Please sign in.");setShowForgot(false);setForgotEmail("");setForgotNew("");setForgotStep(1);setForgotUser(null);}catch(e){console.error(e);pop(genericErr(),"err");}finally{setBusy(false);};};
 
   const doConfirm=async()=>{
