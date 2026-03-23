@@ -103,7 +103,7 @@ async function sendConfirmationEmail(bkg, allUsers) {
       to_email:     bkg.userEmail,
       to_name:      sanitize(bkg.userName),
       booking_ref:  "#" + bkg.id.slice(-8).toUpperCase(),
-      member_no:    member?.memberNo || "Walk-in",
+      member_no:    member?.memberNo ? member.memberNo : (bkg.userId?.startsWith("walkin_") ? "Walk-in Member" : "—"),
       bay:          `Bay ${bkg.bay}`,
       date:         fmtDateLng(bkg.date),
       start_time:   sorted[0] || "",
