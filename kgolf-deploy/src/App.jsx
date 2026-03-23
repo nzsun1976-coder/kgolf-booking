@@ -51,7 +51,7 @@ const validateName = (n) => n.trim().length>=2 && n.trim().length<=80;
 const validateNZPhone = (p) => {
   if (!p || p.trim()==="") return true; // 선택사항
   const digits = p.replace(/[\s\-()]/g,"");
-  return /^(\+64|0)[0-9]{7,11}$/.test(digits);
+  return /^0[0-9]{7,10}$/.test(digits);
 };
 
 const genericErr = () => "Something went wrong. Please try again.";
@@ -89,7 +89,7 @@ const EJ_KEY = import.meta.env.VITE_EMAILJS_PUBLIC_KEY ?? "";
 
 const SHOP_NAME    = "KGolf Screen Golf New Zealand";
 const SHOP_ADDRESS = "7/18 Link Drive, Wairau Valley, Auckland 0627";
-const SHOP_PHONE   = "+64 9 XXX XXXX";
+const SHOP_PHONE   = "09 440 9396";
 const SHOP_EMAIL   = "admin@kgolf.co.nz";
 const SHOP_URL     = "https://www.kgolf.co.nz/";
 
@@ -552,7 +552,7 @@ const BookingModal = memo(function BookingModal({show,onClose,bay,slots,date,reg
         <div>
           {/* Walk-in 모드 — 이름 필드에만 포커스 */}
           <Inp req label="Customer Name" value={walkName} onChange={v=>setWalkName(sanitizeInput(v,80))} placeholder="John Smith" maxLen={80} autoFocus/>
-          <Inp label="Phone (NZ)" value={walkPhone} onChange={v=>setWalkPhone(sanitizePhone(v,20))} placeholder="+64 21 xxx xxxx or 021 xxx xxxx" maxLen={20}
+          <Inp label="Phone (NZ)" value={walkPhone} onChange={v=>setWalkPhone(sanitizePhone(v,20))} placeholder="021 xxx xxxx or 09 xxx xxxx" maxLen={20}
             hint={walkPhone && !validateNZPhone(walkPhone) ? "⚠️ Please enter a valid NZ number" : ""}/>
         </div>
       )}
@@ -687,7 +687,7 @@ function EditMemberModal({show,onClose,member,onSave,busy}) {
       <Inp req label="Full Name" value={form.name} onChange={v=>set("name",sanitizeInput(v,80))} placeholder="John Smith" maxLen={80}/>
       <Inp label="Nickname" value={form.nick} onChange={v=>set("nick",sanitizeInput(v,40))} placeholder="@GolfKing" maxLen={40}/>
       <Inp label="Email" value={form.email} onChange={v=>set("email",v)} type="email" placeholder="john@example.com"/>
-      <Inp label="Phone (NZ)" value={form.phone} onChange={v=>set("phone",sanitizePhone(v,20))} placeholder="+64 21 xxx xxxx or 021 xxx xxxx" maxLen={20} hint={form.phone&&!validateNZPhone(form.phone)?"⚠️ Invalid NZ number":""}/>
+      <Inp label="Phone (NZ)" value={form.phone} onChange={v=>set("phone",sanitizePhone(v,20))} placeholder="021 xxx xxxx or 09 xxx xxxx" maxLen={20} hint={form.phone&&!validateNZPhone(form.phone)?"⚠️ Invalid NZ number":""}/>
       <Inp label="Address" value={form.address} onChange={v=>set("address",sanitizeInput(v,200))} placeholder="Auckland, NZ" maxLen={200}/>
       <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10,marginTop:4}}>
         <Btn full v="dark" onClick={onClose}>Cancel</Btn>
@@ -796,7 +796,7 @@ export default function KGolfApp() {
     const name=sanitize(rf.name,80),nick=sanitize(rf.nick,40),email=sanitizeEmail(rf.email),phone=sanitize(rf.phone,20),address=sanitize(rf.address,200),pass=rf.pass;
     if(!validateName(name)){pop("Name must be 2–80 characters.","err");return;}
     if(!validateEmail(email)){pop("Please enter a valid email address.","err");return;}
-    if(phone && !validateNZPhone(phone)){pop("Please enter a valid NZ phone number.\nExample: +64 21 123 4567 or 021 123 4567","err");return;}
+    if(phone && !validateNZPhone(phone)){pop("Please enter a valid NZ phone number.\nExample: 021 123 4567 or 09 123 4567","err");return;}
     if(!validatePassword(pass)){pop("Password must be 8–128 characters.","err");return;}
     if(pass!==rf.passConfirm){pop("Passwords do not match.","err");return;}
     if(email===ADMIN_EMAIL){pop("That email is reserved.","err");return;}
@@ -969,7 +969,7 @@ export default function KGolfApp() {
           <Inp req label="Full Name" value={rf.name} onChange={v=>setRf(p=>({...p,name:v}))} placeholder="John Smith" maxLen={80}/>
           <Inp label="KGOLF Nickname" value={rf.nick} onChange={v=>setRf(p=>({...p,nick:v}))} placeholder="@GolfKing (optional)" maxLen={40}/>
           <Inp req label="Email" value={rf.email} onChange={v=>setRf(p=>({...p,email:v}))} type="email" placeholder="john@example.com"/>
-          <Inp label="Phone (NZ)" value={rf.phone} onChange={v=>setRf(p=>({...p,phone:sanitizePhone(v,20)}))} placeholder="+64 21 xxx xxxx or 021 xxx xxxx" maxLen={20} hint={rf.phone&&!validateNZPhone(rf.phone)?"⚠️ Invalid NZ number":""}/>
+          <Inp label="Phone (NZ)" value={rf.phone} onChange={v=>setRf(p=>({...p,phone:sanitizePhone(v,20)}))} placeholder="021 xxx xxxx or 09 xxx xxxx" maxLen={20} hint={rf.phone&&!validateNZPhone(rf.phone)?"⚠️ Invalid NZ number":""}/>
           <Inp label="Address" value={rf.address} onChange={v=>setRf(p=>({...p,address:v}))} placeholder="Auckland, NZ" maxLen={200}/>
           <Inp req label="Password" value={rf.pass} onChange={v=>setRf(p=>({...p,pass:v}))} type="password" placeholder="Minimum 8 characters" hint="8–128 characters" maxLen={128}/>
           <Inp req label="Confirm Password" value={rf.passConfirm} onChange={v=>setRf(p=>({...p,passConfirm:v}))} type="password" placeholder="Re-enter password" maxLen={128}/>
