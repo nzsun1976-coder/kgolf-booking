@@ -93,6 +93,72 @@ const SHOP_PHONE   = "09 440 9396";
 const SHOP_EMAIL   = "admin@kgolf.co.nz";
 const SHOP_URL     = "https://www.kgolf.co.nz/";
 
+// Cancel 이메일 Template ID (EmailJS에서 두 번째 템플릿 만들고 등록)
+const EJ_TPL_CANCEL = import.meta.env.VITE_EMAILJS_CANCEL_TEMPLATE_ID ?? EJ_TPL;
+
+async function sendCancellationEmail(bkg, allUsers) {
+  if (!EJ_KEY || !EJ_SVC) { console.warn("[email] EmailJS not configured"); return; }
+  if (!bkg.userEmail) { console.warn("[email] No email address for cancellation"); return; }
+  try {
+    const sorted = [...(bkg.slots||[])].sort((a,b)=>slotIdx(a)-slotIdx(b));
+    const member = allUsers.find(u=>u.id===bkg.userId);
+    await emailjs.send(EJ_SVC, EJ_TPL_CANCEL, {
+      to_email:       bkg.userEmail,
+      to_name:        sanitize(bkg.userName),
+      booking_ref:    "#" + bkg.id.slice(-8).toUpperCase(),
+      member_no:      member?.memberNo ? member.memberNo : (bkg.userId?.startsWith("walkin_") ? "Walk-in Member" : "—"),
+      bay:            `Bay ${bkg.bay}`,
+      date:           fmtDateLng(bkg.date),
+      start_time:     sorted[0] || "",
+      end_time:       sorted.length>0 ? slotEnd(sorted[sorted.length-1]) : "",
+      duration:       totalDur(bkg.slots||[]),
+      email_type:     "CANCELLATION",
+      shop_name:      SHOP_NAME,
+      shop_address:   SHOP_ADDRESS,
+      shop_phone:     SHOP_PHONE,
+      shop_email:     SHOP_EMAIL,
+      shop_url:       SHOP_URL,
+    }, EJ_KEY);
+    console.log("[email] Cancellation sent to", bkg.userEmail);
+  } catch(e) { console.error("[email] Cancellation failed:", e); }
+}
+
+// 날짜/시간 변경 이메일 Template ID
+const EJ_TPL_CHANGE = import.meta.env.VITE_EMAILJS_CHANGE_TEMPLATE_ID ?? EJ_TPL;
+
+async function sendChangeEmail(bkg, newDate, newSlots, allUsers) {
+  if (!EJ_KEY || !EJ_SVC) return;
+  if (!bkg.userEmail) return;
+  try {
+    const sorted = [...newSlots].sort((a,b)=>slotIdx(a)-slotIdx(b));
+    const oldSorted = [...(bkg.slots||[])].sort((a,b)=>slotIdx(a)-slotIdx(b));
+    const member = allUsers.find(u=>u.id===bkg.userId);
+    await emailjs.send(EJ_SVC, EJ_TPL_CHANGE, {
+      to_email:         bkg.userEmail,
+      to_name:          sanitize(bkg.userName),
+      booking_ref:      "#" + bkg.id.slice(-8).toUpperCase(),
+      member_no:        member?.memberNo ? member.memberNo : (bkg.userId?.startsWith("walkin_") ? "Walk-in Member" : "—"),
+      bay:              `Bay ${bkg.bay}`,
+      // 새 날짜/시간
+      new_date:         fmtDateLng(newDate),
+      new_start_time:   sorted[0] || "",
+      new_end_time:     sorted.length>0 ? slotEnd(sorted[sorted.length-1]) : "",
+      new_duration:     totalDur(newSlots),
+      // 이전 날짜/시간
+      old_date:         fmtDateLng(bkg.date),
+      old_start_time:   oldSorted[0] || "",
+      old_end_time:     oldSorted.length>0 ? slotEnd(oldSorted[oldSorted.length-1]) : "",
+      old_duration:     totalDur(bkg.slots||[]),
+      shop_name:        SHOP_NAME,
+      shop_address:     SHOP_ADDRESS,
+      shop_phone:       SHOP_PHONE,
+      shop_email:       SHOP_EMAIL,
+      shop_url:         SHOP_URL,
+    }, EJ_KEY);
+    console.log("[email] Change email sent to", bkg.userEmail);
+  } catch(e) { console.error("[email] Change email failed:", e); }
+}
+
 async function sendConfirmationEmail(bkg, allUsers) {
   if (!EJ_KEY || !EJ_SVC || !EJ_TPL) { console.warn("[email] EmailJS not configured"); return; }
   if (!bkg.userEmail) { console.warn("[email] No email address"); return; }
@@ -833,7 +899,21 @@ export default function KGolfApp() {
     finally{setBusy(false);}
   };
 
-  const doCancel=async(id)=>{setBusy(true);try{await saveBkgs(bookings.map(b=>b.id===id?{...b,status:"cancelled"}:b));await auditLog("BOOKING_CANCELLED",{id,by:user?.email||"admin"});pop("Booking cancelled.");}catch(e){console.error(e);pop(genericErr(),"err");}finally{setBusy(false);};};
+  const doCancel=async(id)=>{
+    setBusy(true);
+    try{
+      const bkg = bookings.find(b=>b.id===id);
+      const updated = bookings.map(b=>b.id===id?{...b,status:"cancelled"}:b);
+      await saveBkgs(updated);
+      await auditLog("BOOKING_CANCELLED",{id,by:user?.email||"admin"});
+      // 취소 확인 이메일 발송
+      if(bkg?.userEmail){
+        sendCancellationEmail(bkg, regUsers).catch(e=>console.error("[email]",e));
+      }
+      pop("Booking cancelled.");
+    }catch(e){console.error(e);pop(genericErr(),"err");}
+    finally{setBusy(false);}
+  };
   const doAdminBook=async(bay,slots,memberInfo)=>{
     setBusy(true);
     try{
@@ -860,7 +940,24 @@ export default function KGolfApp() {
     }catch(e){console.error(e);pop(genericErr(),"err");}
     finally{setBusy(false);}
   };
-  const doChangeTime=async(booking,newDate,newSlots)=>{setBusy(true);try{for(const s of newSlots)if(bookings.some(b=>b.id!==booking.id&&b.date===newDate&&b.bay===booking.bay&&b.slots?.includes(s)&&b.status==="confirmed")){pop("Some of those slots are already taken!","err");return;}await saveBkgs(bookings.map(b=>b.id===booking.id?{...b,date:newDate,slots:newSlots}:b));await auditLog("BOOKING_CHANGED",{id:booking.id});setChangeModal({show:false,booking:null});pop("Booking updated.");}catch(e){console.error(e);pop(genericErr(),"err");}finally{setBusy(false);};};
+  const doChangeTime=async(booking,newDate,newSlots)=>{
+    setBusy(true);
+    try{
+      for(const s of newSlots)
+        if(bookings.some(b=>b.id!==booking.id&&b.date===newDate&&b.bay===booking.bay&&b.slots?.includes(s)&&b.status==="confirmed")){
+          pop("Some of those slots are already taken!","err");return;
+        }
+      await saveBkgs(bookings.map(b=>b.id===booking.id?{...b,date:newDate,slots:newSlots}:b));
+      await auditLog("BOOKING_CHANGED",{id:booking.id,newDate,newSlots:newSlots.length});
+      // 변경 확인 이메일 발송
+      if(booking.userEmail){
+        sendChangeEmail(booking, newDate, newSlots, regUsers).catch(e=>console.error("[email]",e));
+      }
+      setChangeModal({show:false,booking:null});
+      pop("Booking updated. ✅");
+    }catch(e){console.error(e);pop(genericErr(),"err");}
+    finally{setBusy(false);}
+  };
   const saveEditMemberNo=async()=>{if(!editMemberNo)return;const val=sanitize(editMemberNo.val,20);if(!val){pop("Member number cannot be empty.","err");return;}if(regUsers.some(u=>u.id!==editMemberNo.id&&u.memberNo===val)){pop("That member number is already in use.","err");return;}await saveUsrs(regUsers.map(u=>u.id===editMemberNo.id?{...u,memberNo:val}:u));setEditMemberNo(null);pop("Member number updated.");};
 
   // 전체 멤버 프로필 저장
