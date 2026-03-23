@@ -1229,7 +1229,7 @@ export default function KGolfApp() {
 
       // 선택된 듀레이션
       const curReq = bookMode==="practice" ? practiceDur : bookMode==="game" ? gameSlotsReq : 0;
-      const durLabel = (s) => { const m=s*30; return m<60?`${m}min`:m===60?"1hr":`${m/60}hr`; };
+      const durLabel = (s) => { const m=s*30; if(m<60) return `${m} min`; if(m===60) return "1 hr"; if(m===90) return "1.5 hr"; return `${m/60} hr`; };
 
       // 가능한 시작 시간 목록
       const availStarts = bookMode ? SLOTS.filter(s=>isStartAvail(s)) : [];
@@ -1244,18 +1244,17 @@ export default function KGolfApp() {
             <SectionLabel>What would you like to do?</SectionLabel>
             <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:12,marginBottom:24}}>
               {[
-                {id:"practice", icon:"🏌️", title:"Practice", sub:"Driving range &
-short game"},
-                {id:"game",     icon:"⛳", title:"Game",     sub:"Full round on
-course"},
+                {id:"practice", icon:"🏌️", title:"Practice", sub:"Driving range & short game"},
+                {id:"game",     icon:"⛳", title:"Game",     sub:"Play a full round on course"},
               ].map(({id,icon,title,sub})=>{
                 const sel = bookMode===id;
                 return (
                   <button key={id} onClick={()=>{setBookMode(id);setSelStart(null);}}
-                    style={{background:sel?C.limeDim:C.card,border:`2px solid ${sel?C.lime:C.border}`,borderRadius:16,padding:"20px 14px",cursor:"pointer",textAlign:"center",transition:"all .2s",boxShadow:sel?C.limeGlow:"none",fontFamily:"inherit"}}>
-                    <div style={{fontSize:36,marginBottom:10}}>{icon}</div>
-                    <div style={{fontSize:16,fontWeight:900,color:sel?C.lime:C.white,marginBottom:6}}>{title}</div>
-                    <div style={{fontSize:11,color:C.textMute,lineHeight:1.5,whiteSpace:"pre-line"}}>{sub}</div>
+                    style={{background:sel?C.limeDim:C.card,border:`2px solid ${sel?C.lime:C.border}`,borderRadius:16,padding:"22px 14px",cursor:"pointer",textAlign:"center",transition:"all .2s",boxShadow:sel?C.limeGlow:"none",fontFamily:"inherit"}}>
+                    <div style={{fontSize:38,marginBottom:10}}>{icon}</div>
+                    <div style={{fontSize:17,fontWeight:900,color:sel?C.lime:C.white,marginBottom:6}}>{title}</div>
+                    <div style={{fontSize:11,color:sel?C.lime:C.textMute,lineHeight:1.5}}>{sub}</div>
+                    {sel&&<div style={{marginTop:10,width:24,height:3,background:C.lime,borderRadius:2,margin:"10px auto 0",boxShadow:C.limeGlowSm}}/>}
                   </button>
                 );
               })}
@@ -1268,10 +1267,12 @@ course"},
                 <div style={{display:"grid",gridTemplateColumns:"repeat(4,1fr)",gap:8}}>
                   {[1,2,3,4].map(s=>{
                     const sel=practiceDur===s;
-                    return <button key={s} onClick={()=>setPracticeDur(s)}
-                      style={{background:sel?C.lime:C.card,border:`1.5px solid ${sel?C.lime:C.border}`,borderRadius:12,padding:"14px 6px",cursor:"pointer",fontFamily:"inherit",textAlign:"center",boxShadow:sel?C.limeGlowSm:"none",transition:"all .15s"}}>
-                      <div style={{fontSize:18,fontWeight:900,color:sel?"#030803":C.white}}>{durLabel(s)}</div>
-                      <div style={{fontSize:9,color:sel?"#030803":C.textMute,marginTop:3,letterSpacing:"0.05em"}}>{s===1?"min":"session"}</div>
+                    const labels=["30 min","1 hr","1.5 hr","2 hr"];
+                    const sublabels=["Quick","Standard","Extended","Maximum"];
+                    return <button key={s} onClick={()=>{setPracticeDur(s);setSelStart(null);}}
+                      style={{background:sel?C.lime:C.card,border:`1.5px solid ${sel?C.lime:C.border}`,borderRadius:12,padding:"16px 6px",cursor:"pointer",fontFamily:"inherit",textAlign:"center",boxShadow:sel?C.limeGlowSm:"none",transition:"all .15s"}}>
+                      <div style={{fontSize:17,fontWeight:900,color:sel?"#030803":C.white,lineHeight:1}}>{labels[s-1]}</div>
+                      <div style={{fontSize:9,color:sel?"#030803":C.textMute,marginTop:5,letterSpacing:"0.04em"}}>{sublabels[s-1]}</div>
                     </button>;
                   })}
                 </div>
@@ -1285,10 +1286,12 @@ course"},
                 <div style={{display:"grid",gridTemplateColumns:"repeat(4,1fr)",gap:8,marginBottom:18}}>
                   {[1,2,3,4].map(n=>{
                     const sel=numPlayers===n;
+                    const hrs18=n, hrs9=n/2;
                     return <button key={n} onClick={()=>{setNumPlayers(n);setSelStart(null);}}
                       style={{background:sel?C.lime:C.card,border:`1.5px solid ${sel?C.lime:C.border}`,borderRadius:12,padding:"14px 6px",cursor:"pointer",fontFamily:"inherit",textAlign:"center",boxShadow:sel?C.limeGlowSm:"none",transition:"all .15s"}}>
-                      <div style={{fontSize:26,fontWeight:900,color:sel?"#030803":C.white}}>{n}</div>
-                      <div style={{fontSize:9,color:sel?"#030803":C.textMute,marginTop:3}}>{n===1?"player":"players"}</div>
+                      <div style={{fontSize:28,fontWeight:900,color:sel?"#030803":C.white,lineHeight:1}}>{n}</div>
+                      <div style={{fontSize:9,color:sel?"#030803":C.textMute,marginTop:4}}>{n===1?"player":"players"}</div>
+                      <div style={{fontSize:8,color:sel?"#030803":C.textMute,marginTop:3,opacity:.8}}>18H:{hrs18}hr</div>
                     </button>;
                   })}
                 </div>
@@ -1308,15 +1311,19 @@ course"},
                 </div>
 
                 {/* 예상 시간 안내 */}
-                <div style={{background:C.limeDim,borderRadius:12,padding:"14px 16px",border:`1px solid ${C.borderMd}`}}>
-                  <div style={{fontSize:9,color:C.lime,fontWeight:700,textTransform:"uppercase",letterSpacing:"0.12em",marginBottom:6}}>Estimated Time</div>
-                  <div style={{fontSize:20,fontWeight:900,color:C.white}}>
-                    {numPlayers} player{numPlayers>1?"s":""} · {numHoles} holes
-                    <span style={{color:C.lime}}> → ~{durLabel(gameSlotsReq)}</span>
+                <div style={{background:C.limeDim,borderRadius:12,padding:"16px 18px",border:`1px solid ${C.borderMd}`,boxShadow:C.limeGlowSm}}>
+                  <div style={{fontSize:9,color:C.lime,fontWeight:700,textTransform:"uppercase",letterSpacing:"0.12em",marginBottom:10}}>⏱ Estimated Session Time</div>
+                  <div style={{fontSize:26,fontWeight:900,color:C.white,marginBottom:6}}>
+                    ~{durLabel(gameSlotsReq)}
                   </div>
-                  <div style={{fontSize:11,color:C.textMute,marginTop:6,lineHeight:1.6}}>
-                    Based on approx. {numHoles===18?"1 hour":"30 min"} per player per round.
-                    Final time may vary.
+                  <div style={{display:"flex",gap:8,flexWrap:"wrap",marginBottom:10}}>
+                    <Tag color={C.lime}>{numPlayers} player{numPlayers>1?"s":""}</Tag>
+                    <Tag color={C.blue}>{numHoles} holes</Tag>
+                    <Tag color={C.gold}>{numHoles===18?"Full Round":"Half Round"}</Tag>
+                  </div>
+                  <div style={{fontSize:11,color:C.textMute,lineHeight:1.7,borderTop:`1px solid ${C.border}`,paddingTop:10}}>
+                    Based on ~{numHoles===18?"1 hour":"30 min"} per player for {numHoles} holes.<br/>
+                    <strong style={{color:C.textSub}}>Note:</strong> Actual time may vary depending on pace of play.
                   </div>
                 </div>
               </div>
