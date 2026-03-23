@@ -10,6 +10,7 @@
 import { useState, useEffect, useCallback, useRef, memo, useMemo } from "react";
 import { initializeApp } from "firebase/app";
 import { getFirestore, doc, setDoc, onSnapshot, getDoc } from "firebase/firestore";
+import emailjs from "@emailjs/browser";
 
 const firebaseConfig = {
   apiKey: "AIzaSyDBRCKA-yd7oUr19_UiIP6TTlObJ52DQ08",
@@ -37,10 +38,22 @@ function generateSalt() { const a=new Uint8Array(16); crypto.getRandomValues(a);
 const sanitize = (v,max=300) => String(v??"").replace(/[\x00-\x1F\x7F<>"'`&;\\]/g,"").replace(/\.\./g,"").trim().slice(0,max);
 // sanitizeInput: 입력 중 사용 (trim 없음 → 스페이스 입력 가능)
 const sanitizeInput = (v,max=300) => String(v??"").replace(/[\x00-\x1F\x7F<>"'`&;\\]/g,"").replace(/\.\./g,"").slice(0,max);
+// sanitizePhone: 전화번호 입력 — 숫자/+/space/dash/parens만 허용
+const sanitizePhone = (v,max=20) => String(v??"").replace(/[^0-9+\-() ]/g,"").slice(0,max);
 const sanitizeEmail = (v) => String(v??"").toLowerCase().replace(/[^a-z0-9@._+-]/g,"").trim().slice(0,254);
+
 const validateEmail = (e) => /^[^\s@]+@[^\s@]{1,63}\.[^\s@]{2,}$/.test(e);
 const validatePassword = (p) => p.length>=8 && p.length<=128;
 const validateName = (n) => n.trim().length>=2 && n.trim().length<=80;
+
+// NZ 전화번호 검증: +64 또는 0 시작, 8~12자리
+// 예: +64 21 123 4567 / 021 123 4567 / 09 123 4567
+const validateNZPhone = (p) => {
+  if (!p || p.trim()==="") return true; // 선택사항
+  const digits = p.replace(/[\s\-()]/g,"");
+  return /^(\+64|0)[0-9]{7,11}$/.test(digits);
+};
+
 const genericErr = () => "Something went wrong. Please try again.";
 
 // ─── Rate Limit ────────────────────────────────────────────
@@ -81,17 +94,12 @@ const SHOP_EMAIL   = "info@kgolf.nz";
 const SHOP_URL     = "https://kgolf-booking.vercel.app";
 
 async function sendConfirmationEmail(bkg, allUsers) {
-  if (!EJ_KEY || !EJ_SVC || !EJ_TPL) return; // 설정 안됐으면 skip
-  if (!bkg.userEmail) return;                   // 이메일 없으면 skip
+  if (!EJ_KEY || !EJ_SVC || !EJ_TPL) { console.warn("[email] EmailJS not configured"); return; }
+  if (!bkg.userEmail) { console.warn("[email] No email address"); return; }
   try {
     const sorted = [...(bkg.slots||[])].sort((a,b)=>slotIdx(a)-slotIdx(b));
     const member = allUsers.find(u=>u.id===bkg.userId);
-    // EmailJS 동적 로드 (번들 크기 절약)
-    const ejLib = await import("https://cdn.jsdelivr.net/npm/@emailjs/browser@4/dist/email.min.js")
-      .catch(()=>null);
-    const ej = ejLib?.default ?? window.emailjs;
-    if (!ej) return;
-    await ej.send(EJ_SVC, EJ_TPL, {
+    await emailjs.send(EJ_SVC, EJ_TPL, {
       to_email:     bkg.userEmail,
       to_name:      sanitize(bkg.userName),
       booking_ref:  "#" + bkg.id.slice(-8).toUpperCase(),
@@ -109,7 +117,8 @@ async function sendConfirmationEmail(bkg, allUsers) {
       shop_url:     SHOP_URL,
       cancel_url:   SHOP_URL,
     }, EJ_KEY);
-  } catch(e) { console.error("[email]", e); }
+    console.log("[email] Sent to", bkg.userEmail);
+  } catch(e) { console.error("[email] Failed:", e); }
 }
 
 // ─── Time slots ────────────────────────────────────────────
@@ -503,7 +512,7 @@ const BookingModal = memo(function BookingModal({show,onClose,bay,slots,date,reg
             <input
               ref={searchInputRef}
               value={search}
-              onChange={e=>setSearch(sanitize(e.target.value,80))}
+              onChange={e=>setSearch(sanitizeInput(e.target.value,80))}
               placeholder="Name, phone or member number…"
               style={{width:"100%",padding:"11px 14px 11px 40px",background:C.surface2,border:`1px solid ${C.border}`,borderRadius:10,color:C.white,fontSize:14,outline:"none",boxSizing:"border-box",fontFamily:"inherit"}}/>
             <div style={{position:"absolute",left:14,top:"50%",transform:"translateY(-50%)",color:C.textMute,fontSize:14}}>🔍</div>
@@ -543,12 +552,16 @@ const BookingModal = memo(function BookingModal({show,onClose,bay,slots,date,reg
         <div>
           {/* Walk-in 모드 — 이름 필드에만 포커스 */}
           <Inp req label="Customer Name" value={walkName} onChange={v=>setWalkName(sanitizeInput(v,80))} placeholder="John Smith" maxLen={80} autoFocus/>
-          <Inp label="Phone Number" value={walkPhone} onChange={v=>setWalkPhone(sanitizeInput(v,30))} placeholder="+64 21 xxx xxxx" maxLen={30}/>
+          <Inp label="Phone (NZ)" value={walkPhone} onChange={v=>setWalkPhone(sanitizePhone(v,20))} placeholder="+64 21 xxx xxxx or 021 xxx xxxx" maxLen={20}
+            hint={walkPhone && !validateNZPhone(walkPhone) ? "⚠️ Please enter a valid NZ number" : ""}/>
         </div>
       )}
       <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10,marginTop:4}}>
         <Btn full v="dark" onClick={onClose}>Cancel</Btn>
-        <Btn full v="primary" sz="lg" onClick={handleConfirm} disabled={busy||(mode==="search"&&!selMember)||(mode==="walkin"&&walkName.length<2)}>{busy?"Confirming…":"Confirm Booking"}</Btn>
+        <Btn full v="primary" sz="lg" onClick={handleConfirm}
+          disabled={busy||(mode==="search"&&!selMember)||(mode==="walkin"&&walkName.trim().length<2)||(mode==="walkin"&&walkPhone&&!validateNZPhone(walkPhone))}>
+          {busy?"Confirming…":"Confirm Booking"}
+        </Btn>
       </div>
     </Modal>
   );
@@ -674,7 +687,7 @@ function EditMemberModal({show,onClose,member,onSave,busy}) {
       <Inp req label="Full Name" value={form.name} onChange={v=>set("name",sanitizeInput(v,80))} placeholder="John Smith" maxLen={80}/>
       <Inp label="Nickname" value={form.nick} onChange={v=>set("nick",sanitizeInput(v,40))} placeholder="@GolfKing" maxLen={40}/>
       <Inp label="Email" value={form.email} onChange={v=>set("email",v)} type="email" placeholder="john@example.com"/>
-      <Inp label="Phone" value={form.phone} onChange={v=>set("phone",sanitizeInput(v,30))} placeholder="+64 21 xxx xxxx" maxLen={30}/>
+      <Inp label="Phone (NZ)" value={form.phone} onChange={v=>set("phone",sanitizePhone(v,20))} placeholder="+64 21 xxx xxxx or 021 xxx xxxx" maxLen={20} hint={form.phone&&!validateNZPhone(form.phone)?"⚠️ Invalid NZ number":""}/>
       <Inp label="Address" value={form.address} onChange={v=>set("address",sanitizeInput(v,200))} placeholder="Auckland, NZ" maxLen={200}/>
       <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10,marginTop:4}}>
         <Btn full v="dark" onClick={onClose}>Cancel</Btn>
@@ -780,9 +793,10 @@ export default function KGolfApp() {
 
   const doRegister=async()=>{
     if(busy) return;
-    const name=sanitize(rf.name,80),nick=sanitize(rf.nick,40),email=sanitizeEmail(rf.email),phone=sanitize(rf.phone,30),address=sanitize(rf.address,200),pass=rf.pass;
+    const name=sanitize(rf.name,80),nick=sanitize(rf.nick,40),email=sanitizeEmail(rf.email),phone=sanitize(rf.phone,20),address=sanitize(rf.address,200),pass=rf.pass;
     if(!validateName(name)){pop("Name must be 2–80 characters.","err");return;}
-    if(!validateEmail(email)){pop("Please enter a valid email.","err");return;}
+    if(!validateEmail(email)){pop("Please enter a valid email address.","err");return;}
+    if(phone && !validateNZPhone(phone)){pop("Please enter a valid NZ phone number.\nExample: +64 21 123 4567 or 021 123 4567","err");return;}
     if(!validatePassword(pass)){pop("Password must be 8–128 characters.","err");return;}
     if(pass!==rf.passConfirm){pop("Passwords do not match.","err");return;}
     if(email===ADMIN_EMAIL){pop("That email is reserved.","err");return;}
@@ -955,7 +969,7 @@ export default function KGolfApp() {
           <Inp req label="Full Name" value={rf.name} onChange={v=>setRf(p=>({...p,name:v}))} placeholder="John Smith" maxLen={80}/>
           <Inp label="KGOLF Nickname" value={rf.nick} onChange={v=>setRf(p=>({...p,nick:v}))} placeholder="@GolfKing (optional)" maxLen={40}/>
           <Inp req label="Email" value={rf.email} onChange={v=>setRf(p=>({...p,email:v}))} type="email" placeholder="john@example.com"/>
-          <Inp label="Phone" value={rf.phone} onChange={v=>setRf(p=>({...p,phone:v}))} placeholder="+64 21 xxx xxxx" maxLen={30}/>
+          <Inp label="Phone (NZ)" value={rf.phone} onChange={v=>setRf(p=>({...p,phone:sanitizePhone(v,20)}))} placeholder="+64 21 xxx xxxx or 021 xxx xxxx" maxLen={20} hint={rf.phone&&!validateNZPhone(rf.phone)?"⚠️ Invalid NZ number":""}/>
           <Inp label="Address" value={rf.address} onChange={v=>setRf(p=>({...p,address:v}))} placeholder="Auckland, NZ" maxLen={200}/>
           <Inp req label="Password" value={rf.pass} onChange={v=>setRf(p=>({...p,pass:v}))} type="password" placeholder="Minimum 8 characters" hint="8–128 characters" maxLen={128}/>
           <Inp req label="Confirm Password" value={rf.passConfirm} onChange={v=>setRf(p=>({...p,passConfirm:v}))} type="password" placeholder="Re-enter password" maxLen={128}/>
