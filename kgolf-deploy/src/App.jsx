@@ -1025,8 +1025,7 @@ export default function KGolfApp() {
         };
         await saveUsrs(regUsers.map(u=>u.id===user.id?updatedUser:u));
         setUser(updatedUser);
-        if(suspended) pop("Your account has been suspended due to repeated late cancellations.
-Please contact us.","err");
+        if(suspended) pop("Your account has been suspended due to repeated late cancellations. Please contact us.","err");
         else if(warnings>=2) pop(`Booking cancelled. ⚠️ Warning ${warnings}/3 — one more will suspend your account.`,"err");
         else if(late) pop(`Booking cancelled. Late cancellation: ${pts}pts penalty.`,"err");
         else pop("Booking cancelled. No penalty applied. ✅");
