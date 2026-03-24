@@ -758,33 +758,83 @@ function ChangeTimeModal({show,onClose,booking,onConfirm,busy}) {
   const [newSlot,setNewSlot]=useState(booking?.slots?.[0]||SLOTS[0]);
   const [dur,setDur]=useState(booking?.slots?.length||1);
   useEffect(()=>{if(show&&booking){setNewDate(booking.date);setNewSlot(booking.slots?.[0]||SLOTS[0]);setDur(booking.slots?.length||1);}},[show,booking]);
-  const newSlots=SLOTS.slice(slotIdx(newSlot),slotIdx(newSlot)+dur);
+
+  // 예약 모드에 따른 duration 제한
+  const isGame     = booking?.bookMode==="game";
+  const isPractice = booking?.bookMode==="practice";
+  const isAdmin    = booking?.adminCreated;
+
+  // 게임: 인원/홀 기반 고정 슬롯 (변경 불가)
+  const fixedSlots = isGame
+    ? (booking?.numHoles===18 ? (booking?.numPlayers||1)*2 : (booking?.numPlayers||1))
+    : null;
+
+  // 연습: 1~4 슬롯 (30분~2시간)
+  const minDur = isAdmin ? 1 : 1;
+  const maxDur = isAdmin ? 16 : (isPractice ? 4 : (isGame ? fixedSlots : 16));
+
+  // 게임은 duration 고정 — 시작 시간/날짜만 변경 가능
+  const effectiveDur = isGame ? fixedSlots : Math.min(Math.max(dur, minDur), maxDur);
+  const newSlots=SLOTS.slice(slotIdx(newSlot),slotIdx(newSlot)+effectiveDur);
+
+  const modeLabel = isGame
+    ? `⛳ Game · ${booking?.numPlayers}P · ${booking?.numHoles}H (fixed ${totalDur(Array(fixedSlots).fill(""))})`
+    : isPractice ? "🏌️ Practice (30min – 2hr)" : "Admin booking";
+
   return (
     <Modal show={show} onClose={onClose} title="Change Date / Time">
+      {/* 모드 안내 */}
+      <div style={{background:C.surface2,borderRadius:10,padding:"10px 14px",marginBottom:16,border:`1px solid ${C.border}`,display:"flex",alignItems:"center",gap:8}}>
+        <span style={{fontSize:14}}>{isGame?"⛳":isPractice?"🏌️":"📋"}</span>
+        <span style={{fontSize:12,color:C.textSub,fontWeight:600}}>{modeLabel}</span>
+      </div>
+
+      {/* 날짜 */}
       <div style={{marginBottom:16}}>
         <div style={{fontSize:10,color:C.textSub,fontWeight:700,letterSpacing:"0.12em",textTransform:"uppercase",marginBottom:8}}>Date</div>
         <select value={newDate} onChange={e=>setNewDate(e.target.value)} style={{width:"100%",padding:"11px 14px",background:C.surface2,border:`1px solid ${C.border}`,borderRadius:10,fontSize:14,outline:"none",fontFamily:"inherit",color:C.white}}>
           {ADMIN_DATES.filter(d=>d>=TODAY).map((d)=><option key={d} value={d}>{d===TODAY?"Today":fmtDate(d)}</option>)}
         </select>
       </div>
+
+      {/* 시작 시간 */}
       <div style={{marginBottom:16}}>
         <div style={{fontSize:10,color:C.textSub,fontWeight:700,letterSpacing:"0.12em",textTransform:"uppercase",marginBottom:8}}>Start Time</div>
         <select value={newSlot} onChange={e=>setNewSlot(e.target.value)} style={{width:"100%",padding:"11px 14px",background:C.surface2,border:`1px solid ${C.border}`,borderRadius:10,fontSize:14,outline:"none",fontFamily:"inherit",color:C.white}}>
           {SLOTS.map(s=><option key={s} value={s}>{s}</option>)}
         </select>
       </div>
+
+      {/* Duration — 연습만 조정 가능 / 게임은 고정 표시 */}
       <div style={{marginBottom:20}}>
         <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:8}}>
           <div style={{fontSize:10,color:C.textSub,fontWeight:700,letterSpacing:"0.12em",textTransform:"uppercase"}}>Duration</div>
           <span style={{fontSize:13,fontWeight:800,color:C.lime}}>{totalDur(newSlots)}</span>
         </div>
-        <input type="range" min={1} max={16} value={dur} onChange={e=>setDur(Number(e.target.value))} style={{width:"100%",accentColor:C.lime}}/>
-        <div style={{display:"flex",justifyContent:"space-between",fontSize:10,color:C.textMute,marginTop:4}}><span>30m</span><span>8h</span></div>
+        {isGame ? (
+          /* 게임은 슬라이더 없이 고정 안내 */
+          <div style={{background:C.surface2,borderRadius:8,padding:"10px 14px",border:`1px solid ${C.border}`,fontSize:12,color:C.textMute}}>
+            Game duration is fixed based on players &amp; holes. Only date and start time can be changed.
+          </div>
+        ) : (
+          <>
+            <input type="range" min={minDur} max={maxDur} value={effectiveDur}
+              onChange={e=>setDur(Number(e.target.value))}
+              style={{width:"100%",accentColor:C.lime}}/>
+            <div style={{display:"flex",justifyContent:"space-between",fontSize:10,color:C.textMute,marginTop:4}}>
+              <span>30min</span>
+              <span>{isPractice?"2hr (max)":"8hr"}</span>
+            </div>
+          </>
+        )}
       </div>
+
+      {/* 요약 */}
       <div style={{background:C.limeDim,borderRadius:10,padding:"12px 14px",marginBottom:16,border:`1px solid ${C.borderMd}`}}>
         <div style={{fontSize:14,fontWeight:800,color:C.white}}>Bay {booking?.bay} · {newSlot} → {newSlots.length>0?slotEnd(newSlots[newSlots.length-1]):"?"}</div>
         <div style={{fontSize:11,color:C.lime,marginTop:3,fontWeight:600}}>{fmtDate(newDate)} · {totalDur(newSlots)}</div>
       </div>
+
       <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10}}>
         <Btn full v="dark" onClick={onClose}>Cancel</Btn>
         <Btn full v="primary" onClick={()=>onConfirm(booking,newDate,newSlots)} disabled={busy}>{busy?"Saving…":"Save Changes"}</Btn>
