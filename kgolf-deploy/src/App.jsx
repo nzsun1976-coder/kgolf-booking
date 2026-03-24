@@ -210,11 +210,18 @@ const totalDur = (slots) => { const m=(slots?.length||0)*30; const h=Math.floor(
 const fmtDate   = (d) => d?new Date(d+"T12:00").toLocaleDateString("en-NZ",{weekday:"short",month:"short",day:"numeric"}):"";
 const fmtDateLng= (d) => d?new Date(d+"T12:00").toLocaleDateString("en-NZ",{weekday:"long",year:"numeric",month:"long",day:"numeric"}):"";
 // 과거 30일 + 오늘 + 미래 30일 = 총 61일
-const TODAY = new Date().toISOString().split("T")[0];
+// ⚠️ toISOString()은 UTC 기준 → NZ 타임존 로컬 날짜로 수정
+const localDateStr = (d) => {
+  const y = d.getFullYear();
+  const m = String(d.getMonth()+1).padStart(2,"0");
+  const day = String(d.getDate()).padStart(2,"0");
+  return `${y}-${m}-${day}`;
+};
+const TODAY = localDateStr(new Date());
 // 유저용: 오늘 ~ 30일 후
-const DATES = Array.from({length:31},(_,i)=>{ const d=new Date(); d.setDate(d.getDate()+i); return d.toISOString().split("T")[0]; });
+const DATES = Array.from({length:31},(_,i)=>{ const d=new Date(); d.setDate(d.getDate()+i); return localDateStr(d); });
 // 어드민용: 30일 전 ~ 오늘 ~ 30일 후 (총 61일)
-const ADMIN_DATES = Array.from({length:61},(_,i)=>{ const d=new Date(); d.setDate(d.getDate()-30+i); return d.toISOString().split("T")[0]; });
+const ADMIN_DATES = Array.from({length:61},(_,i)=>{ const d=new Date(); d.setDate(d.getDate()-30+i); return localDateStr(d); });
 const SESSION_MS= 30*60*1000;
 const genMemberNo = (users) => `KG-${String(users.length+1).padStart(4,"0")}`;
 
@@ -1856,7 +1863,7 @@ export default function KGolfApp() {
         {/* TIMETABLE */}
         {ctrTab==="timetable"&&(<>
           <div style={{padding:"10px 20px",display:"flex",gap:8,overflowX:"auto",borderBottom:`1px solid ${C.border}`,background:C.surface}}>
-            {ADMIN_DATES.filter(d=>d>=new Date(new Date().setDate(new Date().getDate()-28)).toISOString().split("T")[0]&&d<=new Date(new Date().setDate(new Date().getDate()+28)).toISOString().split("T")[0]).map((d)=>(
+            {ADMIN_DATES.filter(d=>{ const p=new Date(); const f=new Date(); p.setDate(p.getDate()-28); f.setDate(f.getDate()+28); return d>=localDateStr(p)&&d<=localDateStr(f); }).map((d)=>(
               <button key={d} onClick={()=>setCtrDate(d)} style={{
                 flexShrink:0,padding:"7px 14px",borderRadius:8,cursor:"pointer",
                 fontWeight:700,fontSize:11,letterSpacing:"0.05em",transition:"all .15s",
