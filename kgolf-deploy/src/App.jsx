@@ -500,9 +500,14 @@ function DragGrid({ bookings, ctrDate, onBookSlots, onContextMenu }) {
     return el?.closest("[data-bay][data-slot]");
   };
 
+  const longPressTimer = useRef(null);
+  const touchActive    = useRef(false); // 롱프레스 활성화 여부
+
   const finishDrag = useCallback(() => {
-    if(!isDragging.current) return;
+    clearTimeout(longPressTimer.current);
+    if(!isDragging.current) { touchActive.current=false; return; }
     isDragging.current=false;
+    touchActive.current=false;
     const slots=getDragSlots();
     if(slots.length>0&&dragBay) {
       const free=slots.filter(s=>!isSlotTaken(dragBay,s));
@@ -512,12 +517,17 @@ function DragGrid({ bookings, ctrDate, onBookSlots, onContextMenu }) {
   },[getDragSlots,dragBay]);
 
   useEffect(()=>{
-    // 마우스 종료
     window.addEventListener("mouseup", finishDrag);
-    // 터치 종료
-    const touchEnd = () => finishDrag();
+    const touchEnd = () => {
+      clearTimeout(longPressTimer.current);
+      finishDrag();
+    };
     const touchMove = (e) => {
-      if(!isDragging.current) return;
+      if(!isDragging.current) {
+        // 롱프레스 전에 손가락 움직이면 → 드래그 취소, 스크롤 허용
+        clearTimeout(longPressTimer.current);
+        return;
+      }
       e.preventDefault();
       const el = getElementFromTouch(e.touches[0]);
       if(!el) return;
@@ -525,11 +535,13 @@ function DragGrid({ bookings, ctrDate, onBookSlots, onContextMenu }) {
       const s = el.dataset.slot;
       if(b===dragBay && s) setDragCur(s);
     };
-    window.addEventListener("touchend", touchEnd, {passive:true});
-    window.addEventListener("touchmove", touchMove, {passive:false});
+    window.addEventListener("touchend",  touchEnd,  {passive:true});
+    window.addEventListener("touchcancel",touchEnd,  {passive:true});
+    window.addEventListener("touchmove",  touchMove, {passive:false});
     return()=>{
-      window.removeEventListener("mouseup", finishDrag);
-      window.removeEventListener("touchend", touchEnd);
+      window.removeEventListener("mouseup",   finishDrag);
+      window.removeEventListener("touchend",  touchEnd);
+      window.removeEventListener("touchcancel",touchEnd);
       window.removeEventListener("touchmove", touchMove);
     };
   },[finishDrag, dragBay]);
@@ -537,7 +549,7 @@ function DragGrid({ bookings, ctrDate, onBookSlots, onContextMenu }) {
   const dragSlots=getDragSlots();
 
   return (
-    <div ref={gridRef} style={{overflowX:"auto",borderRadius:12,border:`1px solid ${C.border}`,background:C.surface,userSelect:"none",touchAction:"none"}}>
+    <div ref={gridRef} style={{overflowX:"auto",borderRadius:12,border:`1px solid ${C.border}`,background:C.surface,userSelect:"none"}}>
       <div style={{minWidth:960,padding:14}}>
         {/* Hour labels */}
         <div style={{display:"flex",paddingLeft:72,marginBottom:6,gap:0}}>
@@ -563,7 +575,18 @@ function DragGrid({ bookings, ctrDate, onBookSlots, onContextMenu }) {
                   data-bay={bay} data-slot={slot}
                   onMouseDown={e=>{e.preventDefault();if(isSlotTaken(bay,slot))return;isDragging.current=true;setDragBay(bay);setDragStart(slot);setDragCur(slot);}}
                   onMouseEnter={()=>{if(!isDragging.current||bay!==dragBay)return;setDragCur(slot);}}
-                  onTouchStart={e=>{e.preventDefault();if(isSlotTaken(bay,slot))return;isDragging.current=true;setDragBay(bay);setDragStart(slot);setDragCur(slot);}}
+                  onTouchStart={e=>{
+                    if(isSlotTaken(bay,slot)) return;
+                    const tBay=bay, tSlot=slot;
+                    // 롱프레스 400ms 후 드래그 시작 — 그전에 움직이면 스크롤
+                    longPressTimer.current=setTimeout(()=>{
+                      isDragging.current=true;
+                      touchActive.current=true;
+                      setDragBay(tBay);setDragStart(tSlot);setDragCur(tSlot);
+                      // 진동 피드백 (지원 기기)
+                      if(navigator.vibrate) navigator.vibrate(40);
+                    },400);
+                  }}
                   onContextMenu={e=>{e.preventDefault();if(bkg)onContextMenu(e,bkg,bay,slot);}}
                   style={{
                     width:23,minHeight:42,flexShrink:0,borderRadius:4,
