@@ -482,6 +482,7 @@ function DragGrid({ bookings, ctrDate, onBookSlots, onContextMenu }) {
   const [dragStart,setDragStart] = useState(null);
   const [dragCur,setDragCur]     = useState(null);
   const isDragging = useRef(false);
+  const gridRef    = useRef(null);
 
   const isSlotTaken = (bay,slot) => bookings.some(b=>b.date===ctrDate&&b.bay===bay&&b.slots?.includes(slot)&&b.status==="confirmed");
   const getSlotBkg  = (bay,slot) => bookings.find(b=>b.date===ctrDate&&b.bay===bay&&b.slots?.includes(slot)&&b.status==="confirmed");
@@ -493,25 +494,50 @@ function DragGrid({ bookings, ctrDate, onBookSlots, onContextMenu }) {
     return SLOTS.slice(from,to+1);
   },[dragBay,dragStart,dragCur]);
 
-  useEffect(()=>{
-    const up = () => {
-      if(!isDragging.current) return;
-      isDragging.current=false;
-      const slots=getDragSlots();
-      if(slots.length>0&&dragBay) {
-        const free=slots.filter(s=>!isSlotTaken(dragBay,s));
-        if(free.length>0) onBookSlots(dragBay,free);
-      }
-      setDragBay(null);setDragStart(null);setDragCur(null);
-    };
-    window.addEventListener("mouseup",up);
-    return()=>window.removeEventListener("mouseup",up);
+  // 터치 좌표로 슬롯/베이 요소 찾기
+  const getElementFromTouch = (touch) => {
+    const el = document.elementFromPoint(touch.clientX, touch.clientY);
+    return el?.closest("[data-bay][data-slot]");
+  };
+
+  const finishDrag = useCallback(() => {
+    if(!isDragging.current) return;
+    isDragging.current=false;
+    const slots=getDragSlots();
+    if(slots.length>0&&dragBay) {
+      const free=slots.filter(s=>!isSlotTaken(dragBay,s));
+      if(free.length>0) onBookSlots(dragBay,free);
+    }
+    setDragBay(null);setDragStart(null);setDragCur(null);
   },[getDragSlots,dragBay]);
+
+  useEffect(()=>{
+    // 마우스 종료
+    window.addEventListener("mouseup", finishDrag);
+    // 터치 종료
+    const touchEnd = () => finishDrag();
+    const touchMove = (e) => {
+      if(!isDragging.current) return;
+      e.preventDefault();
+      const el = getElementFromTouch(e.touches[0]);
+      if(!el) return;
+      const b = Number(el.dataset.bay);
+      const s = el.dataset.slot;
+      if(b===dragBay && s) setDragCur(s);
+    };
+    window.addEventListener("touchend", touchEnd, {passive:true});
+    window.addEventListener("touchmove", touchMove, {passive:false});
+    return()=>{
+      window.removeEventListener("mouseup", finishDrag);
+      window.removeEventListener("touchend", touchEnd);
+      window.removeEventListener("touchmove", touchMove);
+    };
+  },[finishDrag, dragBay]);
 
   const dragSlots=getDragSlots();
 
   return (
-    <div style={{overflowX:"auto",borderRadius:12,border:`1px solid ${C.border}`,background:C.surface,userSelect:"none"}}>
+    <div ref={gridRef} style={{overflowX:"auto",borderRadius:12,border:`1px solid ${C.border}`,background:C.surface,userSelect:"none",touchAction:"none"}}>
       <div style={{minWidth:960,padding:14}}>
         {/* Hour labels */}
         <div style={{display:"flex",paddingLeft:72,marginBottom:6,gap:0}}>
@@ -534,8 +560,10 @@ function DragGrid({ bookings, ctrDate, onBookSlots, onContextMenu }) {
               const span=bkg?bkg.slots?.length:1;
               return (
                 <div key={slot}
+                  data-bay={bay} data-slot={slot}
                   onMouseDown={e=>{e.preventDefault();if(isSlotTaken(bay,slot))return;isDragging.current=true;setDragBay(bay);setDragStart(slot);setDragCur(slot);}}
                   onMouseEnter={()=>{if(!isDragging.current||bay!==dragBay)return;setDragCur(slot);}}
+                  onTouchStart={e=>{e.preventDefault();if(isSlotTaken(bay,slot))return;isDragging.current=true;setDragBay(bay);setDragStart(slot);setDragCur(slot);}}
                   onContextMenu={e=>{e.preventDefault();if(bkg)onContextMenu(e,bkg,bay,slot);}}
                   style={{
                     width:23,minHeight:42,flexShrink:0,borderRadius:4,
@@ -1912,27 +1940,24 @@ export default function KGolfApp() {
 
         {/* TIMETABLE */}
         {ctrTab==="timetable"&&(<>
-          <div style={{padding:"10px 20px",display:"flex",gap:8,overflowX:"auto",borderBottom:`1px solid ${C.border}`,background:C.surface}}>
+          <div ref={el=>{if(el){const btn=el.querySelector("[data-today-admin]");if(btn)btn.scrollIntoView({inline:"start",behavior:"auto"});}}}
+            style={{padding:"10px 20px",display:"flex",gap:8,overflowX:"auto",borderBottom:`1px solid ${C.border}`,background:C.surface}}>
             {ADMIN_DATES.filter(d=>{ const p=new Date(); const f=new Date(); p.setDate(p.getDate()-28); f.setDate(f.getDate()+28); return d>=localDateStr(p)&&d<=localDateStr(f); }).map((d)=>(
-              <button key={d} onClick={()=>setCtrDate(d)} style={{
+              <button key={d} data-today-admin={d===TODAY?"true":undefined} onClick={()=>setCtrDate(d)} style={{
                 flexShrink:0,padding:"7px 14px",borderRadius:8,cursor:"pointer",
                 fontWeight:700,fontSize:11,letterSpacing:"0.05em",transition:"all .15s",
-                // 선택된 날짜
                 ...(d===ctrDate ? {
                   background:C.lime,color:"#030803",
                   border:`2px solid ${C.lime}`,boxShadow:C.limeGlow
                 }
-                // 오늘 (선택 안 됨)
                 : d===TODAY ? {
                   background:"rgba(101,232,58,0.15)",color:C.lime,
                   border:`2px solid ${C.lime}`,boxShadow:C.limeGlowSm
                 }
-                // 과거
                 : d<TODAY ? {
                   background:"rgba(255,255,255,0.03)",color:"#556655",
                   border:"1px solid rgba(255,255,255,0.06)",opacity:0.7
                 }
-                // 미래
                 : {
                   background:C.surface2,color:C.white,
                   border:`1px solid ${C.border}`
